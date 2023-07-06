@@ -1,0 +1,239 @@
+title "tour"
+description "This file contains the usage of every feature in the Tot spec."
+
+spec-version {
+    major 0
+    minor 1
+    patch 0
+}
+
+contributors [
+    "you-win"
+]
+
+/*******************************************************************************
+The real tests start below
+*******************************************************************************/
+
+// Basics
+
+unit-val
+bool-val true
+number-val 123
+string-val "success!"
+list-val []
+dict-val {}
+referenced-val &title
+:gen generator-dict() {}
+:gen generator-list() []
+:gen generator-transform() ()
+
+// Configuration
+
+:options {
+    allow-generators true
+}
+
+// Unit values
+
+my-cool-unit
+
+// Boolean values
+
+other-bool false
+
+// Number values
+
+looks-like-int 10
+looks-like-float 10.10
+
+// String values
+
+single-line-string "hello world!"
+
+multiline-string "
+this
+goes
+multiple
+lines
+"
+
+multiline-string-fancy
+"
+this /* combo breaker */ has inner comments and line comments // poof!
+/* c-c-c-combo breaker */along with \"escaped\" quotes and 'single quotes'
+"
+
+// List values
+
+basic-list [ 1, 2, 3 ]
+
+list-with-values [
+    true,
+    123 // notice the lack of trailing comma
+    "string"
+    "multiline
+string"
+    [
+        "an inner list"
+        true
+    ]
+    // nested duplicate dicts
+    {
+        inner-list [
+            {
+                inner-list
+            }
+        ]
+    }
+]
+
+list-with-dicts [
+    {}, // This one is empty
+    {/* inner comment in an empty dict */}
+    {
+        this-one-has-a-unit-key
+    },
+    {
+        inner "content"
+    }
+    {
+        inner {
+            nested-inner {}
+        }
+    }
+]
+
+// Dict values
+
+basic-dict {
+    name "My Dictionary"
+    value 10
+    10 "number keys are valid since all keys are always parsed as strings"
+}
+
+nesting-dict {
+    inner-list [
+        [
+            {
+                name "Anonymous Dictionary"
+            }
+        ]
+    ]
+    inner-empty-dict {/* spooky comment */}
+    inner-dict {
+        name "Inner Dictionary"
+    }
+}
+
+// References
+
+referenced-description &description
+
+// This is basically a no-op, as nothing should happen and both will be unit values
+unit-reference-dummy
+unit-reference-test &unit-reference-dummy
+
+reference-list-dummy [
+    1
+    [
+        2
+    ]
+    {
+        value 3
+    }
+    [
+        [
+            {
+                decoy-turtle "🐢"
+            }
+            {
+                value 4
+            }
+        ]
+    ]
+]
+
+reference-list-test-raw &reference-list-dummy
+// Note the () instead of [] for list access
+// This is due to () being tagged for "tranformations" whereas [] is always a list
+reference-list-test-1 &reference-list-dummy(0)
+// We can also access members of a referenced reference
+reference-list-test-2 &reference-list-test-raw(1)(0)
+reference-list-test-3 &reference-list-dummy(2)("value")
+reference-list-test-4 &reference-list-dummy(3)(0)(1)("value")
+
+reference-dict-dummy {
+    1 1
+    2 [
+        2
+    ]
+    3 {
+        value 3
+    }
+    4 {
+        value [
+            {
+                value 4
+            }
+        ]
+    }
+}
+
+reference-dict-test-raw &refernce-dict-dummy
+reference-dict-test-1 &reference-dict-dummy(0)
+reference-dict-test-2 &reference-dict-dummy(1)(0)
+reference-dict-test-3 &reference-dict-dummy(2)("value")
+reference-dict-test-4 &reference-dict-dummy(3)("value")(0)("value")
+
+// Generators
+
+// Transformation generator that does nothing
+:gen unit-gen() ()
+// In order to be used, generators must be referenced
+gen-unit-test &unit-gen()
+
+:gen simple-boolean-gen() (put true)
+simple-boolean-gen-test &simple-boolean-gen()
+
+:gen passthrough-boolean-gen(bool) (put bool)
+passthrough-boolean-gen-test &passthrough-boolean-gen(false)
+
+:gen number-gen(n) (put (+ n 1))
+number-gen-test &number-gen(10)
+
+:gen string-gen(name) (put (+ "hello " name "!"))
+string-gen-test &string-gen("Tim")
+
+:gen duplicate-list-gen(n) (for i n (put [1, 2, 3]))
+duplicate-list-gen-test1 [&duplicate-list-gen(3)]
+duplicate-list-gen-test2 [&duplicate-list-gen(0)]
+
+:gen list-gen(count) [
+    (for i count (put i))
+]
+list-gen-test &list-gen(5)
+
+:gen dict-gen(name, age, description="default description") {
+    name name
+    age (put (+ age 1))
+    description description
+    common "this is a common key"
+}
+dict-gen-test [
+    &dict-gen("Person 1", 10, "my cool person")
+    &dict-gen("Person 2", 100)
+    &dict-gen("Person 2", 100) // Intentionally duplicated
+]
+
+// Expressions
+
+// Note that expressions can only be used as values, never as keys
+empty-expression ()
+basic-expression (put true)
+number-expression (put (- 10 1))
+string-concat-expression (put (+ "hello " "world"))
+nested-string-concat-expression (put (+ "hello" (+ " " "world")))
+list-fill-expression [
+    (for i 3 (put i))
+]
