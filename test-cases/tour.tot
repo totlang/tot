@@ -17,26 +17,20 @@ The real tests start below
 
 // Basics
 
-unit-val
+unit-val ()
 bool-val true
 number-val 123
 string-val "success!"
 list-val []
 dict-val {}
 referenced-val &title
-:gen generator-dict() {}
-:gen generator-list() []
-:gen generator-transform() ()
-
-// Configuration
-
-:options {
-    allow-generators true
-}
+(gen generator-dict () {})
+(gen generator-list () [])
+(gen generator-transform () ())
 
 // Unit values
 
-my-cool-unit
+my-cool-unit ()
 
 // Boolean values
 
@@ -189,37 +183,37 @@ reference-dict-test-4 &reference-dict-dummy(3)("value")(0)("value")
 // Generators
 
 // Transformation generator that does nothing
-:gen unit-gen() ()
+(gen unit-gen () ())
 // In order to be used, generators must be referenced
 gen-unit-test &unit-gen()
 
-:gen simple-boolean-gen() (put true)
+(gen simple-boolean-gen () (true))
 simple-boolean-gen-test &simple-boolean-gen()
 
-:gen passthrough-boolean-gen(bool) (put bool)
+(gen passthrough-boolean-gen(bool) (bool))
 passthrough-boolean-gen-test &passthrough-boolean-gen(false)
 
-:gen number-gen(n) (put (+ n 1))
+(gen number-gen (n) (+ n 1))
 number-gen-test &number-gen(10)
 
-:gen string-gen(name) (put (+ "hello " name "!"))
+(gen string-gen (name) (+ "hello " name "!"))
 string-gen-test &string-gen("Tim")
 
-:gen duplicate-list-gen(n) (for i n (put [1, 2, 3]))
+(gen duplicate-list-gen (n) (for i n ([1, 2, 3])))
 duplicate-list-gen-test1 [&duplicate-list-gen(3)]
 duplicate-list-gen-test2 [&duplicate-list-gen(0)]
 
-:gen list-gen(count) [
-    (for i count (put i))
-]
+(gen list-gen (count) [
+    (for i count (i))
+])
 list-gen-test &list-gen(5)
 
-:gen dict-gen(name, age, description="default description") {
+(gen dict-gen (name, age, description="default description") {
     name name
-    age (put (+ age 1))
+    age (+ age 1)
     description description
     common "this is a common key"
-}
+})
 dict-gen-test [
     &dict-gen("Person 1", 10, "my cool person")
     &dict-gen("Person 2", 100)
@@ -230,10 +224,10 @@ dict-gen-test [
 
 // Note that expressions can only be used as values, never as keys
 empty-expression ()
-basic-expression (put true)
-number-expression (put (- 10 1))
-string-concat-expression (put (+ "hello " "world"))
-nested-string-concat-expression (put (+ "hello" (+ " " "world")))
+basic-expression (true)
+number-expression (- 10 1)
+string-concat-expression (+ "hello " "world")
+nested-string-concat-expression (+ "hello" (+ " " "world"))
 list-fill-expression [
-    (for i 3 (put i))
+    (for i 3 (i))
 ]

@@ -6,11 +6,16 @@ Currently the only documented specification is located in [`tour.tot`](test-case
 
 ## Features
 
-* Newline-based format
+* Whitespace-based format that _does not_ require indentation
+* Simple, limited syntax
 * JSON-style objects and lists
 * Reference values
 * File import
-* Non-Turing complete expressions
+* Non-Turing complete Lisp-style expressions
+* Compatible with:
+    * JSON
+    * YAML
+    * TOML
 
 ## Implementations
 
@@ -34,18 +39,14 @@ A cool
 "
 
 /*
-Keys with no matching pair are parsed as unit values
-There is no ambiguity since there can only be
-1 key-value pair per line
+Keys can have no value denoted by an empty expression.
 */
-unit-value
+unit-value ()
 
 // Keys are always parsed as Strings
-// The key names cannot contain quotes (', ")
-// and they cannot start with a colon (:) since colons are reserved
-// for Tot-specific syntax
+// The key names cannot contain quotes unless they are escaped (i.e. \', \")
 1 2
-tims-value "value" // Cannot use a apostraphe for the key name
+tim\'s-value "value"
 
 // JSON-style objects (called dicts in Tot)
 counter {
@@ -72,14 +73,14 @@ my-timezone &counter("inner-config")("timezone") // Equal to my-timezone "GMT"
 
 // Expressions
 // A subset of Lisp syntax that is intentionally not Turing-complete
-calculated-number (put (+ 1 2)) // Equal to calculated-number 3
+calculated-number (+ 1 2) // Equal to calculated-number 3
 
 calculated-list [
-    (for i 2 (put {
+    (for i 2 {
         name "counted object"
         count i
         counter &counter
-    }))
+    })
 ]
 /*
 Equal to:
@@ -98,24 +99,27 @@ calculated-list [
 */
 
 // Generators
-:gen person(name, description="pretty cool") {
+(gen person (name, description="pretty cool") {
     name name
     description description
     favorite-food "unknown"
-}
+})
 some-person &person("Tim")
 
-:gen prefilled-list(n) [
+(gen prefilled-list (n) [
     "some string first"
     (for val n (put val))
-]
+])
 count-up &prefilled-list(3)
 
+(gen calculate-square (n) (* n n))
+square-of-2 &calculate-square(2)
+
 // Imports
-:use other_file.tot
+(use other_file.tot)
 my-imported-value &other_file.tot("my-value")
 
-:use to_be_renamed.tot renamed-import
+(use to_be_renamed.tot renamed-import)
 my-renamed-import-value &renamed-import("cool-value")("nested")
 
 ```
