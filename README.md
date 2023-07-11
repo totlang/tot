@@ -23,7 +23,7 @@ Currently the only documented specification is located in [`tour.tot`](test-case
 
 ## Example
 
-```tot
+```jsonc
 // C-style comments
 /*
 and block comments
