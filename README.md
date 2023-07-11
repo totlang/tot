@@ -23,7 +23,7 @@ Currently the only documented specification is located in [`tour.tot`](test-case
 
 ## Example
 
-```jsonc
+```clojure
 // C-style comments
 /*
 and block comments
@@ -66,10 +66,10 @@ things-i-like [
 ]
 
 // Reference values
-my-title &title // Equal to my-title "Tot Example"
+my-title (& title) // Equal to my-title "Tot Example"
 
 // Reference value access
-my-timezone &counter("inner-config")("timezone") // Equal to my-timezone "GMT"
+my-timezone (& counter "inner-config" "timezone") // Equal to my-timezone "GMT"
 
 // Expressions
 // A subset of Lisp syntax that is intentionally not Turing-complete
@@ -99,28 +99,28 @@ calculated-list [
 */
 
 // Generators
-(gen person (name, description="pretty cool") {
+(gen person [name description] {
     name name
     description description
     favorite-food "unknown"
 })
-some-person &person("Tim")
+some-person (person "Tim" "A cool person")
 
-(gen prefilled-list (n) [
+(gen prefilled-list [n] [
     "some string first"
     (for val n (put val))
 ])
-count-up &prefilled-list(3)
+count-up (prefilled-list 3)
 
-(gen calculate-square (n) (* n n))
-square-of-2 &calculate-square(2)
+(gen calculate-square [n] (* n n))
+square-of-2 (calculate-square 2)
 
 // Imports
 (use other_file.tot)
-my-imported-value &other_file.tot("my-value")
+my-imported-value (other_file.tot "my-value")
 
 (use to_be_renamed.tot renamed-import)
-my-renamed-import-value &renamed-import("cool-value")("nested")
+my-renamed-import-value (renamed-import "cool-value" "nested")
 
 ```
 
