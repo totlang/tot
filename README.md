@@ -2,7 +2,7 @@
 
 A configuration language for sane programmers.
 
-Currently the only documented specification is located in [`tour.tot`](test-cases/tour.tot) ([SPEC.md](SPEC.md) is under construction).
+The full language specification is located in [SPEC.md](SPEC.md).
 
 ## Features
 
@@ -20,6 +20,7 @@ Currently the only documented specification is located in [`tour.tot`](test-case
 ## Implementations
 
 * Rust: [tot-rs](https://github.com/totlang/tot-rs)
+* Deno: [tot-deno](https://github.com/totlang/tot-deno)
 
 ## Example
 
@@ -41,12 +42,15 @@ A cool
 /*
 Keys can have no value denoted by an empty expression.
 */
-unit-value ()
+unit-value null
 
 // Keys are always parsed as Strings
-// The key names cannot contain quotes unless they are escaped (i.e. \', \")
+// The key names cannot contain double quotes unless they are escaped (i.e. \")
 1 2
-tim\'s-value "value"
+tim's-value "value"
+
+my-int 1
+my-float 1.0
 
 // JSON-style objects (called dicts in Tot)
 counter {
@@ -69,34 +73,11 @@ things-i-like [
 my-title (& title) // Equal to my-title "Tot Example"
 
 // Reference value access
-my-timezone (& counter "inner-config" "timezone") // Equal to my-timezone "GMT"
+my-timezone (& counter inner-config timezone) // Equal to my-timezone "GMT"
 
 // Expressions
 // A subset of Lisp syntax that is intentionally not Turing-complete
 calculated-number (+ 1 2) // Equal to calculated-number 3
-
-calculated-list [
-    (for i 2 {
-        name "counted object"
-        count i
-        counter &counter
-    })
-]
-/*
-Equal to:
-calculated-list [
-    {
-        name "counted object"
-        count 0
-        counter &counter
-    }
-    {
-        name "counted object"
-        count 1
-        counter &counter
-    }
-]
-*/
 
 // Generators
 (gen person [name description] {
@@ -106,21 +87,8 @@ calculated-list [
 })
 some-person (person "Tim" "A cool person")
 
-(gen prefilled-list [n] [
-    "some string first"
-    (for val n (put val))
-])
-count-up (prefilled-list 3)
-
 (gen calculate-square [n] (* n n))
 square-of-2 (calculate-square 2)
-
-// Imports
-(use other_file.tot)
-my-imported-value (other_file.tot "my-value")
-
-(use to_be_renamed.tot renamed-import)
-my-renamed-import-value (renamed-import "cool-value" "nested")
 
 ```
 

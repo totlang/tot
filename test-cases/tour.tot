@@ -17,7 +17,7 @@ The real tests start below
 
 // Basics
 
-unit-val ()
+unit-val null
 bool-val true
 number-val 123
 string-val "success!"
@@ -26,11 +26,11 @@ dict-val {}
 referenced-val &title
 (gen generator-dict [] {})
 (gen generator-list [] [])
-(gen generator-expression [] ())
+(gen generator-expression [] null)
 
 // Unit values
 
-my-cool-unit ()
+my-cool-unit null
 
 // Boolean values
 
@@ -76,7 +76,7 @@ string"
     {
         inner-list [
             {
-                inner-list
+                inner-list null
             }
         ]
     }
@@ -86,7 +86,7 @@ list-with-dicts [
     {}, // This one is empty
     {/* inner comment in an empty dict */}
     {
-        this-one-has-a-unit-key
+        this-one-has-a-unit-key null
     },
     {
         inner "content"
@@ -122,11 +122,11 @@ nesting-dict {
 
 // References
 
-referenced-description &description
+referenced-description (& description)
 
 // This is basically a no-op, as nothing should happen and both will be unit values
-unit-reference-dummy
-unit-reference-test &unit-reference-dummy
+unit-reference-dummy null
+unit-reference-test (& unit-reference-dummy)
 
 reference-list-dummy [
     1
@@ -181,30 +181,20 @@ reference-dict-test-4 (& reference-dict-dummy 3 "value" 0 "value")
 // Generators
 
 // Transformation generator that does nothing
-(gen unit-gen [] ())
-// In order to be used, generators must be referenced
+(gen unit-gen [] null)
 gen-unit-test (unit-gen)
 
-(gen simple-boolean-gen [] (true))
+(gen simple-boolean-gen [] true)
 simple-boolean-gen-test (simple-boolean-gen)
 
-(gen passthrough-boolean-gen [bool] (bool))
+(gen passthrough-boolean-gen [bool] bool)
 passthrough-boolean-gen-test (passthrough-boolean-gen false)
 
 (gen number-gen [n] (+ n 1))
 number-gen-test (number-gen 10)
 
-(gen string-gen [name] (+ "hello " name "!"))
+(gen string-gen [name] (+ "hello " (+ name "!")))
 string-gen-test (string-gen "Tim")
-
-(gen duplicate-list-gen [n] (for i n ([1, 2, 3])))
-duplicate-list-gen-test1 [(duplicate-list-gen 3)]
-duplicate-list-gen-test2 [(duplicate-list-gen 0)]
-
-(gen list-gen [count] [
-    (for i count (i))
-])
-list-gen-test (list-gen 5)
 
 (gen dict-gen [name age description] {
     name name
@@ -221,11 +211,6 @@ dict-gen-test [
 // Expressions
 
 // Note that expressions can only be used as values, never as keys
-empty-expression ()
-basic-expression (true)
 number-expression (- 10 1)
 string-concat-expression (+ "hello " "world")
 nested-string-concat-expression (+ "hello" (+ " " "world"))
-list-fill-expression [
-    (for i 3 (i))
-]
