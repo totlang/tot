@@ -61,7 +61,7 @@ package, or use `--workspace`.
 | | |
 |---|---|
 | `tot fmt [--check] [FILE]...` | format in place; `--check` writes nothing and exits 1 on a diff |
-| `tot check [FILE]...` | parse and report diagnostics |
+| `tot check [--strict] [FILE]...` | parse and report diagnostics |
 | `tot to <json\|yaml\|toml> [FILE]` | write this document as another format |
 | `tot from <json\|yaml\|toml> [FILE]` | read another format and write tot |
 
@@ -70,6 +70,13 @@ rest. Exit codes: `0` ok, `1` unformatted or unparseable, `2` I/O or bad argumen
 
 Flags: `--compact` (`to json`), `--null=omit|error` (`to toml`, default `omit`). A flag that
 doesn't apply to the chosen format is an error, not a no-op.
+
+`check --strict` adds one lint: **a member's value must begin on its key's line.** A `{`, `[`,
+or `"""` may still run past it — only the start has to sit beside the key. Everything it
+reports is legal tot, so it's opt-in. It exists because there's no separator between members:
+a missing value shifts every member after it, and while quoted string values catch nearly all
+of those at the offending token, keeping members on one line is what makes the error land in
+the right place every time.
 
 `from json` does no conversion. JSON is already tot, so it just reparses and reformats.
 
@@ -96,6 +103,7 @@ let value = tot::parse(src)?;                     // -> Value
 let text  = tot::format(src)?;                    // canonical tot, source -> source
 let text  = tot::format_value(&value);            // Value -> tot
 let json  = tot::json::to_string_pretty(&value);
+let warns = tot::lint(src)?;                      // -> Vec<Warning>, all legal-but-risky
 ```
 
 There is no JSON *parser* and there doesn't need to be — `parse` reads JSON directly.
@@ -117,9 +125,10 @@ src/                tot — library, zero dependencies
   parse.rs          recursive descent -> Value
   cst.rs            lossless tree: comments, blank lines, inline/block choice
   fmt.rs            formatter (over the CST) + Value -> tot emitter
+  lint.rs           opt-in checks (over the CST); nothing here is a language rule
   json.rs           JSON output only
   value.rs          Value, Integer, Float, Map
-  error.rs          Span, Error, caret rendering
+  error.rs          Span, Error, shared caret rendering
 cli/                tot-cli — binary `tot`; deps: toml, yaml_serde
 ```
 
@@ -140,6 +149,5 @@ formatting preserves the parsed value, and formatting is idempotent.
 
 ## Not built yet
 
-- `tot check --strict` — warn when a member spans a newline
 - `tot get <path>`
 - serde `Serializer` / `Deserializer`

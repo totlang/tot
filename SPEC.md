@@ -222,8 +222,10 @@ in order of importance:
    is a bareword in value position → error points at line 1, not at EOF).
 2. Errors are reported as *"key `debug` has no value"* by tracking the key's span, never as
    *"unexpected EOF"*.
-3. `tot check --strict` warns when a member spans a newline. Whitespace stays non-structural;
-   the *tooling* recovers the safety it would otherwise have provided.
+3. `tot check --strict` warns when a member's value does not begin on its key's line. A `{`,
+   `[`, or `"""` may still run past it — only the *start* of the value has to sit beside the
+   key. Whitespace stays non-structural in the language; the tooling picks the convention that
+   makes the error land in the right place every time.
 
 ## Interop
 
@@ -292,13 +294,15 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
 
 ```
 tot fmt [--check] [FILE]...       format in place, or stdin to stdout
-tot check [FILE]...               parse and report errors
+tot check [--strict] [FILE]...    parse and report errors
 tot to <json|yaml|toml> [FILE]    write this document as another format
 tot from <json|yaml|toml> [FILE]  read another format and write tot
 ```
 
 - Extension `.tot`. With no FILE, input is read from stdin.
 - `--check` on `fmt`: write nothing, exit 1 if any file would change.
+- `--strict` on `check`: also warn about the split-member shape above. Everything it reports
+  is legal tot, so it is opt-in.
 - `--compact` on `to json`: one line instead of indented.
 - `--null=omit|error` on `to toml`, defaulting to `omit`.
 - Exit codes: `0` success, `1` a file is unformatted or a document failed to parse, `2` a file
@@ -310,8 +314,7 @@ tot from <json|yaml|toml> [FILE]  read another format and write tot
   the input with the ordinary parser and reformats — the JSON direction needs no code at all,
   which is goal #2 paying for itself.
 
-Not built yet: `tot check --strict` (warn when a member spans a newline) and
-`tot get <path>`.
+Not built yet: `tot get <path>`.
 
 ### Implementation notes
 

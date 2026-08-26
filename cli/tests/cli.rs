@@ -153,6 +153,26 @@ fn check_renders_a_diagnostic() {
     assert!(out.stderr.contains("^^^^^"), "{}", out.stderr);
 }
 
+#[test]
+fn check_strict_flags_members_split_across_lines() {
+    let split = "timeout\n30\n";
+
+    // The document is legal, so plain check says nothing.
+    assert_eq!(run(&["check"], split).code, 0);
+
+    let out = run(&["check", "--strict"], split);
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("warning: "), "{}", out.stderr);
+    assert!(out.stderr.contains("`timeout`"), "{}", out.stderr);
+
+    assert_eq!(run(&["check", "--strict"], "timeout 30\n").code, 0);
+    // A block value still only has to start on the key's line.
+    assert_eq!(
+        run(&["check", "--strict"], "listen {\n  port 8080\n}\n").code,
+        0
+    );
+}
+
 // --- JSON ---------------------------------------------------------------------------------
 
 #[test]

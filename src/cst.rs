@@ -35,11 +35,22 @@ pub(crate) struct Collection<'a> {
     pub tail: Vec<Lead<'a>>,
 }
 
+/// A member's key, carrying what the formatter and the lints each need.
+#[derive(Debug)]
+pub(crate) struct Key {
+    /// The key as it should be written: unquoted where that is legal.
+    pub text: String,
+    /// Where the key sits in the source, for diagnostics.
+    pub span: Span,
+    /// Whether a newline separates the key from the first token of its value.
+    pub split_from_value: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct Item<'a> {
     pub lead: Vec<Lead<'a>>,
-    /// `None` for array elements. Already normalized: quoted only where it has to be.
-    pub key: Option<String>,
+    /// `None` for array elements.
+    pub key: Option<Key>,
     pub value: Node<'a>,
     /// A comment that followed the value on the same line.
     pub trailing: Option<&'a str>,
@@ -182,13 +193,19 @@ impl<'a> Builder<'a> {
     fn item(&mut self, keyed: bool, mut lead: Vec<Lead<'a>>) -> Result<Item<'a>, Error> {
         let key = if keyed {
             let token = self.tokens.get(self.pos).ok_or_else(internal)?;
-            let raw = &self.src[token.span.start..token.span.end];
+            let span = token.span;
+            let raw = &self.src[span.start..span.end];
             let text = match &token.kind {
                 TokenKind::Str(cooked) => render_key(raw, cooked),
                 TokenKind::Bareword => raw.to_string(),
                 _ => return Err(internal()),
             };
             self.pos += 1;
+
+            // The gap between a key and the start of its value is exactly what
+            // `check --strict` asks about, so record it while we are standing on it.
+            let split_from_value = self.gap().contains('\n');
+
             // A comment between a key and its value has no natural home. Move it above the
             // member rather than dropping it.
             let (_, between) = self.split_gap(false);
@@ -197,7 +214,12 @@ impl<'a> Builder<'a> {
                     .into_iter()
                     .filter(|line| matches!(line, Lead::Comment(_))),
             );
-            Some(text)
+
+            Some(Key {
+                text,
+                span,
+                split_from_value,
+            })
         } else {
             None
         };

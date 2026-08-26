@@ -12,7 +12,8 @@ tot — JSON with the punctuation removed
 
 USAGE
     tot fmt [--check] [FILE]...   format in place, or stdin to stdout
-    tot check [FILE]...           parse and report errors
+    tot check [--strict] [FILE]...
+                                  parse and report errors
     tot to <FORMAT> [FILE]        write this document as json, yaml, or toml
     tot from <FORMAT> [FILE]      read json, yaml, or toml and write tot
     tot help
@@ -21,6 +22,7 @@ With no FILE, input is read from stdin.
 
 FLAGS
     --check         fmt: write nothing, and exit 1 if any file would change
+    --strict        check: also warn when a member's value is not on its key's line
     --compact       to json: one line instead of indented
     --null=omit     to toml: drop null members and elements, reporting each (default)
     --null=error    to toml: refuse to convert instead
@@ -123,8 +125,12 @@ fn fmt(args: &[String]) -> Result<ExitCode, String> {
 
 fn check(args: &[String]) -> Result<ExitCode, String> {
     let (flags, files) = split(args);
-    if let Some(flag) = flags.first() {
-        return Err(unknown_flag(flag));
+    let mut strict = false;
+    for flag in flags {
+        match flag {
+            "--strict" => strict = true,
+            other => return Err(unknown_flag(other)),
+        }
     }
 
     let mut status = Status::default();
@@ -132,10 +138,27 @@ fn check(args: &[String]) -> Result<ExitCode, String> {
         let Some(src) = source.read(&mut status) else {
             continue;
         };
-        if let Err(e) = tot::parse(&src) {
-            eprintln!("tot: in {}", source.label());
-            eprint!("{}", e.render(&src));
-            status.invalid();
+        // `lint` parses as well, so --strict costs no extra pass here.
+        let result = if strict {
+            tot::lint(&src)
+        } else {
+            tot::parse(&src).map(|_| Vec::new())
+        };
+
+        match result {
+            Err(e) => {
+                eprintln!("tot: in {}", source.label());
+                eprint!("{}", e.render(&src));
+                status.invalid();
+            }
+            Ok(warnings) if !warnings.is_empty() => {
+                eprintln!("tot: in {}", source.label());
+                for warning in &warnings {
+                    eprint!("{}", warning.render(&src));
+                }
+                status.invalid();
+            }
+            Ok(_) => {}
         }
     }
 

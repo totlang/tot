@@ -89,7 +89,7 @@ impl Printer {
         self.leads(&item.lead, level);
         self.indent(level);
         if let Some(key) = &item.key {
-            self.out.push_str(key);
+            self.out.push_str(&key.text);
             self.out.push(' ');
         }
         self.value(&item.value, level);
@@ -131,7 +131,7 @@ impl Printer {
                     self.out.push(' ');
                 }
                 if let Some(key) = &item.key {
-                    self.out.push_str(key);
+                    self.out.push_str(&key.text);
                     self.out.push(' ');
                 }
                 self.value(&item.value, level);
