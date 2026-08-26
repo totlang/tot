@@ -182,6 +182,15 @@ The formatter **preserves inline vs. block** and never reflows — running `fmt`
 JSON gives you back one correctly-punctuated long line, not an exploded document. It unquotes
 keys where legal, indents two spaces, and emits LF.
 
+**LF is part of the canonical form, so `fmt` rewrites a CRLF file.** On Windows that matters:
+with git's default `core.autocrlf=true`, `fmt` writes LF, git converts it back to CRLF on the
+next checkout, and `fmt --check` reports the file unformatted forever — CI can never go green.
+Check `.tot` files out with LF, as [.gitattributes](.gitattributes) in this repo does:
+
+```
+*.tot text eol=lf
+```
+
 ### Interop caveats
 
 | | |

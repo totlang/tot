@@ -72,6 +72,22 @@ impl Path {
         &self.text
     }
 
+    /// Spells one key the way a path spells it.
+    ///
+    /// A message that names a key should name it in a form the reader can type straight back,
+    /// and the keys that most need this — one holding a `.` or a space — are exactly the ones
+    /// a reader would otherwise get wrong. Anything building a path out of keys should go
+    /// through here rather than joining them with `.` itself.
+    ///
+    /// ```
+    /// assert_eq!(tot::Path::segment("port"), "port");
+    /// assert_eq!(tot::Path::segment("com.example"), r#""com.example""#);
+    /// assert!(tot::Path::parse(&tot::Path::segment("log level")).is_ok());
+    /// ```
+    pub fn segment(key: &str) -> String {
+        as_segment(key)
+    }
+
     /// Look this path up in a document.
     ///
     /// The error's span covers the segment that failed, so a caller that wants a caret can
@@ -119,6 +135,10 @@ impl Path {
     /// An array element is never created, under either setting. The index would have to be
     /// in range already, and there is no answer to what would fill the gap if it were not.
     ///
+    /// **A failed `set` leaves the document alone.** The whole path is checked before
+    /// anything is written, so `Missing::Create` cannot half-build a branch and then report
+    /// an error against the document it just changed.
+    ///
     /// ```
     /// let mut doc = tot::parse("listen {port 8080}").unwrap();
     /// let value = tot::Value::Bool(true);
@@ -129,6 +149,11 @@ impl Path {
     /// assert_eq!(tot::format_value(&doc), "listen {\n  port 8080\n  tls true\n}\n");
     /// ```
     pub fn set(&self, document: &mut Value, value: Value, missing: Missing) -> Result<(), Error> {
+        // Nothing is written until the whole path is known to work. `walk` builds objects as
+        // it descends, so a failure further along would otherwise leave behind the branch it
+        // had already made — a document changed by a call that reported it had failed.
+        self.preflight(document, missing)?;
+
         // A path always has at least one segment; `parse` rejects an empty one.
         let last = self.segments.len() - 1;
         let parent = self.walk(document, last, missing)?;
@@ -158,6 +183,42 @@ impl Path {
             }
             (Step::Index(n), other) => Err(self.not_an_array(last, *n, other)),
         }
+    }
+
+    /// Decides whether [`set`](Path::set) will succeed, without touching the document.
+    ///
+    /// This walks the same steps as [`walk`](Path::walk) and reports the same four failures,
+    /// reading only. Once a member is missing, everything below it is an object this call
+    /// would be creating, which is tracked as `None` rather than by making one.
+    fn preflight(&self, document: &Value, missing: Missing) -> Result<(), Error> {
+        let last = self.segments.len() - 1;
+        let mut current = Some(document);
+        for (i, segment) in self.segments.iter().enumerate() {
+            let Some(value) = current else {
+                // Inside something that does not exist yet. A key lands in a fresh object;
+                // an index never can, and the last step is no different.
+                if let Step::Index(n) = &segment.step {
+                    return Err(self.not_an_array(i, *n, &Value::Object(Map::new())));
+                }
+                continue;
+            };
+            current = match (&segment.step, value) {
+                (Step::Key(key), Value::Object(map)) => match map.get(key) {
+                    Some(next) => Some(next),
+                    // The last step may name something new — that is what setting is for.
+                    None if i == last => return Ok(()),
+                    None if missing == Missing::Create => None,
+                    None => return Err(self.no_member(i, key, map)),
+                },
+                (Step::Key(key), other) => return Err(self.not_an_object(i, key, other)),
+                (Step::Index(n), Value::Array(items)) => match items.get(*n) {
+                    Some(next) => Some(next),
+                    None => return Err(self.out_of_range(i, *n, items.len())),
+                },
+                (Step::Index(n), other) => return Err(self.not_an_array(i, *n, other)),
+            };
+        }
+        Ok(())
     }
 
     /// Resolves the first `upto` segments, mutably, for the two callers above.

@@ -1,0 +1,9 @@
+# `tot fmt` writes LF — see "Canonical form" in SPEC.md. On a CRLF checkout the formatter
+# would rewrite every file on sight and `tot fmt --check` could never pass, because git would
+# convert the LF output straight back to CRLF. Checking out with LF is what keeps the
+# formatter and the working tree agreeing, on Windows as well as anywhere else.
+*.tot text eol=lf
+*.rs text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+.gitattributes text eol=lf

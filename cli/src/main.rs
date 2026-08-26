@@ -14,9 +14,11 @@ USAGE
     tot fmt [--check] [FILE]...   format in place, or stdin to stdout
     tot check [--strict] [--schema=FILE] [FILE]...
                                   parse and report errors
-    tot merge [FILE]...           fold documents together, left to right
-    tot get <PATH> [FILE]         print the one value at PATH
-    tot set <PATH> <VALUE> [FILE] write VALUE at PATH and print the document
+    tot merge [--null=…] [FILE]...
+                                  fold documents together, left to right
+    tot get [--raw] <PATH> [FILE] print the one value at PATH
+    tot set [--raw] [--create] <PATH> <VALUE> [FILE]
+                                  write VALUE at PATH and print the document
     tot to <FORMAT> [FILE]        write this document as json, yaml, or toml
     tot from <FORMAT> [FILE]      read json, yaml, or toml and write tot
     tot help
@@ -43,16 +45,17 @@ SCHEMA
     A schema is a tot document shaped like the ones it describes, with a type
     where each value would be:
 
-        name    string
-        listen  {host string port int tls? bool}
-        regions [string]
-        labels  {* string}
-        retries int|null
+        name    \"string\"
+        listen  {host \"string\" port \"int\" tls? \"bool\"}
+        regions [\"string\"]
+        labels  {* \"string\"}
+        retries \"int|null\"
 
-    Types are any, string, int, float, bool, and null, joined with `|`. A `?` on
-    a key makes the member optional; a `*` key covers every other key. Without
-    one, a member the schema does not name is an error — catching a typo is most
-    of what checking a shape is for.
+    A type name is quoted because a schema is tot, and in tot a bare word is
+    never a value. Types are any, string, int, float, bool, and null, joined
+    with `|`. A `?` on a key makes the member optional; a `*` key covers every
+    other key. Without one, a member the schema does not name is an error —
+    catching a typo is most of what checking a shape is for.
 
 MERGE
     Objects merge member by member; anything else is replaced whole. An array
@@ -204,26 +207,14 @@ fn check(args: &[String]) -> Result<ExitCode, String> {
         let Some(src) = source.read(&mut status) else {
             continue;
         };
-        // `lint` parses as well, so --strict costs no extra pass here.
-        let result = if strict {
-            tot::lint(&src)
-        } else {
-            tot::parse(&src).map(|_| Vec::new())
-        };
-
-        let warnings = match result {
-            Ok(warnings) => warnings,
+        let (warnings, violations) = match diagnose(&src, strict, schema.as_ref()) {
+            Ok(found) => found,
             Err(e) => {
                 eprintln!("tot: in {}", source.label());
                 eprint!("{}", e.render(&src));
                 status.invalid();
                 continue;
             }
-        };
-        // The document parsed, so the schema can say something useful about it.
-        let violations = match &schema {
-            Some(schema) => schema.check(&src).expect("already parsed"),
-            None => Vec::new(),
         };
 
         if warnings.is_empty() && violations.is_empty() {
@@ -240,6 +231,29 @@ fn check(args: &[String]) -> Result<ExitCode, String> {
     }
 
     Ok(status.into())
+}
+
+/// Runs the passes that were asked for over one document.
+///
+/// Everything here needs the document parsed, and `lint` and `Schema::check` each parse it
+/// themselves — so whichever was requested is the parse, and a bare `parse` is the fallback
+/// for when neither was. A document that does not parse fails at the first of them.
+fn diagnose(
+    src: &str,
+    strict: bool,
+    schema: Option<&tot::Schema>,
+) -> Result<(Vec<tot::Warning>, Vec<tot::Violation>), tot::Error> {
+    let warnings = if strict { tot::lint(src)? } else { Vec::new() };
+    let violations = match schema {
+        Some(schema) => schema.check(src)?,
+        None => {
+            if !strict {
+                tot::parse(src)?;
+            }
+            Vec::new()
+        }
+    };
+    Ok((warnings, violations))
 }
 
 /// Folds documents together, left to right, and writes the result.

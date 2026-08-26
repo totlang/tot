@@ -184,7 +184,12 @@ impl<'de> MapAccess<'de> for Members<'de> {
         let Some((key, _)) = self.entries.get(self.index) else {
             return Ok(None);
         };
-        seed.deserialize(Key { key }).map(Some)
+        // A key that will not deserialize is located the same way a value is: a map with a
+        // typed key fails here, and "expected u16" with nothing to point at is no better a
+        // message on this side than it would be on the other.
+        seed.deserialize(Key { key })
+            .map(Some)
+            .map_err(|e| e.at_key(key))
     }
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {

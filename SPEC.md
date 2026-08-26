@@ -273,7 +273,9 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
 
 ## Canonical form (`tot fmt`)
 
-- Two-space indent, LF endings, trailing newline.
+- Two-space indent, LF endings, trailing newline. LF is part of the canonical form, so a CRLF
+  file is an unformatted one: `fmt` rewrites it and `fmt --check` reports it. A repository
+  whose checkout converts line endings has to pin `.tot` to LF, or `--check` can never pass.
 - `,` and `:` deleted.
 - Keys eagerly unquoted wherever legal: `"address"` → `address`. Pasted JSON is rewritten
   into tot on first format; that's the point.
@@ -375,6 +377,14 @@ retries "int|null"
   how a schema says it does not mind.
 - A schema therefore cannot describe a member literally named `*`, or one ending in `?`. Both
   are documented limits rather than escapes, on the grounds that neither appears in practice.
+  `*?` is an error rather than a way around the first of them: a catch-all covers every other
+  key and is satisfied by none, so it is already optional.
+- Since `?` lives on the key, `a` and `a?` name the same member — and being different keys,
+  the language's duplicate rule does not catch them. Declaring one twice is a schema error,
+  because a member checked against two types that cannot both hold has no useful answer.
+- `any` beside another alternative swallows it, but every alternative is still read: a typo
+  after `any` is an error, exactly as the same typo before it is. Whether a schema is checked
+  does not depend on the order its author wrote a union in.
 - Every violation is reported, not just the first. A typo produces two — the name that is
   missing and the name that is not known — because either alone sends you to the wrong place.
 - A violation's location is a **path**, spelled the way `tot get` spells one. Where the

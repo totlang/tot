@@ -39,6 +39,7 @@ use std::fmt;
 
 use crate::cst::{self, Body, Item, Node};
 use crate::error::{Error, Span};
+use crate::lex::Token;
 use crate::path::{as_segment, kind};
 use crate::value::{Map, Value};
 
@@ -111,11 +112,13 @@ impl Schema {
     /// A schema that does not parse, or that parses but is not a schema, is an [`Error`]. The
     /// second kind carries the span of the key it went wrong at, so both read the same.
     pub fn parse(src: &str) -> Result<Self, Error> {
-        let value = crate::parse(src)?;
+        // Both walks read the same tokens, so the source is lexed once.
+        let tokens = crate::lex::tokenize(src)?;
+        let value = crate::parse::from_tokens(src, &tokens)?;
         Type::compile(&value, "")
             .map(|root| Schema { root })
             .map_err(|violation| {
-                let spans = key_spans(src).unwrap_or_default();
+                let spans = key_spans(src, &tokens);
                 let span = spans
                     .get(&violation.path)
                     .copied()
@@ -133,10 +136,12 @@ impl Schema {
     /// Every violation is reported, not just the first: a checker that stops at one turns a
     /// single pass into a guessing game.
     pub fn check(&self, src: &str) -> Result<Vec<Violation>, Error> {
-        let document = crate::parse(src)?;
+        // Both walks read the same tokens, so the source is lexed once.
+        let tokens = crate::lex::tokenize(src)?;
+        let document = crate::parse::from_tokens(src, &tokens)?;
         let mut violations = self.check_value(&document);
         if !violations.is_empty() {
-            let spans = key_spans(src)?;
+            let spans = key_spans(src, &tokens);
             for violation in &mut violations {
                 violation.span = spans.get(&violation.path).copied();
             }
@@ -258,16 +263,30 @@ impl Type {
     /// A bareword type: one name, or several joined by `|`.
     fn names(text: &str, path: &str) -> Result<Type, Violation> {
         let mut scalars = Vec::new();
+        let mut any = false;
+        // Every alternative is read, `any` included. Returning as soon as `any` turned up
+        // would make a typo after it legal while the same typo before it was an error, so
+        // whether a schema was checked would depend on the order its author happened to
+        // write the union in.
         for name in text.split('|') {
             if name == "any" {
-                // `any` swallows every alternative beside it, so there is nothing to collect.
-                return Ok(Type::Any);
+                if any {
+                    return Err(Violation::new(path, "`any` is listed twice"));
+                }
+                any = true;
+                continue;
             }
             match Scalar::parse(name) {
                 Some(scalar) if scalars.contains(&scalar) => {
                     return Err(Violation::new(path, format!("`{name}` is listed twice")));
                 }
                 Some(scalar) => scalars.push(scalar),
+                // An empty alternative has no name to quote, so naming the `|` is the only
+                // way to say what went wrong.
+                None if name.is_empty() => {
+                    return Err(Violation::new(path, "a `|` needs a type on both sides")
+                        .with_help("the types are any, string, int, float, bool, and null"));
+                }
                 None => {
                     return Err(
                         Violation::new(path, format!("`{name}` is not a type")).with_help(
@@ -278,11 +297,18 @@ impl Type {
                 }
             }
         }
-        Ok(Type::Scalars(scalars))
+        // `any` swallows every alternative beside it — which is why they are checked first
+        // rather than skipped. `Scalars` is never empty: the only way to collect nothing is
+        // for every alternative to have been `any`.
+        Ok(if any {
+            Type::Any
+        } else {
+            Type::Scalars(scalars)
+        })
     }
 
     fn fields(map: &Map, path: &str) -> Result<Fields, Violation> {
-        let mut members = Vec::new();
+        let mut members: Vec<Field> = Vec::new();
         let mut rest = None;
         for (key, value) in map.iter() {
             // `*` stands for every key the schema does not name, so it is not a member.
@@ -290,9 +316,19 @@ impl Type {
                 rest = Some(Box::new(Type::compile(value, &join(path, "*"))?));
                 continue;
             }
+            // A catch-all already covers no key at all when the document has none, so there
+            // is nothing for `?` to say. Left alone, `*?` would fall through below and
+            // quietly declare a member named `*` — the one thing a schema cannot describe.
+            if key == "*?" {
+                return Err(Violation::new(
+                    &join(path, &as_segment(key)),
+                    "`*?` is not a member name",
+                )
+                .with_help("write `*`, which covers every other key and is satisfied by none"));
+            }
             if let Some(name) = key.strip_suffix('*') {
                 return Err(Violation::new(
-                    &join(path, key),
+                    &join(path, &as_segment(key)),
                     format!("`{key}` is not a member name"),
                 )
                 .with_help(format!(
@@ -303,10 +339,23 @@ impl Type {
                 Some(name) => (name, true),
                 None => (key, false),
             };
+            // `a` and `a?` are different keys, so the language's duplicate-key rule does not
+            // see this one. Left in, the member would be checked twice against two types that
+            // cannot both hold, and only one of them would be reported.
+            if members.iter().any(|field| field.name == name) {
+                return Err(Violation::new(
+                    &join(path, &as_segment(key)),
+                    format!("member `{name}` is declared twice"),
+                )
+                .with_help("`?` goes on the key, so `a` and `a?` name the same member"));
+            }
             members.push(Field {
                 name: name.to_string(),
                 optional,
-                ty: Type::compile(value, &join(path, &as_segment(name)))?,
+                // Spelled with the key as the schema wrote it, `?` and all: this path is
+                // looked up in the schema's own spans, and `tls` would not find `tls?`.
+                // `Fields::check` builds the document's path from `name` instead.
+                ty: Type::compile(value, &join(path, &as_segment(key)))?,
             });
         }
         Ok(Fields { members, rest })
@@ -427,15 +476,20 @@ fn join(path: &str, segment: &str) -> String {
 ///
 /// A violation is found in the value tree, which has no spans, so this is how one gets back
 /// to the text. Built only when something is already wrong, since it costs a second walk.
-fn key_spans(src: &str) -> Result<HashMap<String, Span>, Error> {
-    let tokens = crate::lex::tokenize(src)?;
-    let document = cst::from_tokens(src, &tokens)?;
+///
+/// The caller has already parsed these tokens, so the tree is known to be well formed; a
+/// document with no spans to offer is one where every violation renders as a plain line,
+/// which is what happens anyway for a violation with nowhere to point.
+fn key_spans(src: &str, tokens: &[Token]) -> HashMap<String, Span> {
     let mut spans = HashMap::new();
+    let Ok(document) = cst::from_tokens(src, tokens) else {
+        return spans;
+    };
     match &document.body {
         Body::Members(items) => index(items, "", &mut spans),
         Body::Value(node) => index_node(node, "", &mut spans),
     }
-    Ok(spans)
+    spans
 }
 
 fn index(items: &[Item<'_>], path: &str, spans: &mut HashMap<String, Span>) {

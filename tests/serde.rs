@@ -355,6 +355,24 @@ fn an_error_path_is_a_usable_path() {
     assert!(tot::Path::parse(&path).is_ok(), "{path}");
 }
 
+/// A key that will not deserialize is located the same way a value is. A map with a typed
+/// key fails on the key, and "expected u16" with nowhere to point is no better a message on
+/// that side than it would be on the other.
+#[test]
+fn an_error_on_a_key_names_the_key() {
+    let value = tot::parse("ports {80 \"http\" abc \"nope\"}").unwrap();
+    let e = tot::from_value::<Config>(&value).unwrap_err();
+
+    assert_eq!(e.path().as_deref(), Some("ports.abc"));
+    assert!(e.to_string().ends_with("at `ports.abc`"), "{e}");
+
+    #[derive(Debug, serde::Deserialize)]
+    struct Config {
+        #[allow(dead_code)]
+        ports: std::collections::BTreeMap<u16, String>,
+    }
+}
+
 /// A document that does not parse keeps its span, so a caller can still draw a caret.
 #[test]
 fn a_parse_failure_keeps_its_span() {

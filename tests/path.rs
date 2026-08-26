@@ -385,3 +385,67 @@ fn a_parse_error_spans_the_path_it_was_given() {
     assert_eq!(&text[e.span.start..e.span.end], "=");
     assert!(e.render(text).contains("      ^"), "{}", e.render(text));
 }
+
+/// A `set` that fails changes nothing. `Missing::Create` builds objects as it descends, so
+/// without checking the whole path first a failure part way along would leave the branch it
+/// had already made behind — a document altered by a call that said it had failed.
+#[test]
+fn a_failed_set_leaves_the_document_alone() {
+    let before = tot::parse("root {}").unwrap();
+
+    // Each of these fails somewhere after the point where `Create` would have started
+    // building, which is the only way a partial write could happen.
+    for (path, expected) in [
+        ("a.b.c[0]", "not an array"),
+        ("a.b[3].c", "not an array"),
+        ("x[0]", "not an array"),
+    ] {
+        let mut doc = before.clone();
+        let e = Path::parse(path)
+            .unwrap()
+            .set(&mut doc, tot::Value::Bool(true), tot::Missing::Create)
+            .expect_err(path);
+
+        assert!(e.message.contains(expected), "`{path}`: {}", e.message);
+        assert_eq!(doc, before, "`{path}` left the document changed");
+    }
+
+    // The same holds without `--create`, where nothing is built in the first place.
+    let mut doc = before.clone();
+    assert!(
+        Path::parse("a.b.c")
+            .unwrap()
+            .set(&mut doc, tot::Value::Bool(true), tot::Missing::Reject)
+            .is_err()
+    );
+    assert_eq!(doc, before);
+}
+
+/// The check that makes a failed `set` a no-op must not make a good one a no-op too.
+#[test]
+fn a_set_that_can_succeed_still_does() {
+    let mut doc = tot::parse("root {}").unwrap();
+    Path::parse("a.b.c")
+        .unwrap()
+        .set(&mut doc, tot::Value::Bool(true), tot::Missing::Create)
+        .expect("every step is creatable");
+    assert_eq!(
+        tot::json::to_string(&doc),
+        r#"{"root":{},"a":{"b":{"c":true}}}"#
+    );
+
+    // Reaching through an array that is already there, into an object that is not.
+    let mut doc = tot::parse("xs [{} {}]").unwrap();
+    Path::parse("xs[1].deep.leaf")
+        .unwrap()
+        .set(
+            &mut doc,
+            tot::Value::Integer(tot::Integer::from_i64(1)),
+            tot::Missing::Create,
+        )
+        .expect("index in range, objects creatable below it");
+    assert_eq!(
+        tot::json::to_string(&doc),
+        r#"{"xs":[{},{"deep":{"leaf":1}}]}"#
+    );
+}

@@ -239,10 +239,77 @@ fn a_schema_that_is_not_a_schema_is_refused() {
         (r#"a {b?* "int"}"#, "is not a member name"),
         (r#"a "int|int""#, "listed twice"),
         (r#"a "int|nope""#, "is not a type"),
+        (r#"a "int|""#, "needs a type on both sides"),
     ] {
         let e = Schema::parse(schema).expect_err(schema);
         assert!(e.message.contains(expected), "`{schema}`: {}", e.message);
     }
+}
+
+/// `any` swallows whatever is written beside it, but reading stops being the same as
+/// checking the moment it returns early — a typo after `any` would be legal while the same
+/// typo before it was an error, and whether a schema was checked would come down to the
+/// order its author happened to write the union in.
+#[test]
+fn a_typo_beside_any_is_caught_from_either_side() {
+    for schema in [r#"a "any|nonsense""#, r#"a "nonsense|any""#] {
+        let e = Schema::parse(schema).expect_err(schema);
+        assert!(
+            e.message.contains("`nonsense` is not a type"),
+            "`{schema}`: {}",
+            e.message
+        );
+    }
+    // And the duplicate rule reaches `any` too, the same as it reaches `int`.
+    let e = Schema::parse(r#"a "any|any""#).expect_err("any twice");
+    assert!(e.message.contains("listed twice"), "{}", e.message);
+
+    // What `any` beside a type means is unchanged: it accepts everything.
+    assert_eq!(check(r#"a "int|any""#, r#"a "x""#), none());
+}
+
+/// `?` goes on the key, so `a` and `a?` are the same member spelled two ways — and being
+/// different keys, the language's own duplicate rule cannot see it. A member checked against
+/// two types that cannot both hold has no useful answer, so the schema is refused.
+#[test]
+fn a_member_declared_twice_is_refused() {
+    let e = Schema::parse(r#"a "int"  a? "string""#).expect_err("declared twice");
+    assert!(
+        e.message.contains("member `a` is declared twice"),
+        "{}",
+        e.message
+    );
+    assert!(Schema::parse(r#"a "int"  b? "string""#).is_ok());
+}
+
+/// A catch-all covers every other key and is satisfied by none, so it is already optional.
+/// Left alone, `*?` would slip past the `*` check and declare a member named `*` — the one
+/// thing the schema language says it cannot describe.
+#[test]
+fn a_catch_all_may_not_be_marked_optional() {
+    let e = Schema::parse(r#"a {*? "int"}"#).expect_err("`*?`");
+    assert!(
+        e.message.contains("`*?` is not a member name"),
+        "{}",
+        e.message
+    );
+    // The catch-all itself is unaffected, and an object with none of the keys it covers is
+    // fine — which is the sense in which it was already optional.
+    assert_eq!(check(r#"a {* "int"}"#, "a {}"), none());
+}
+
+/// A schema error points at the key it went wrong at, and an optional member is a key like
+/// any other. The path is built from the key as the schema wrote it, `?` and all, because
+/// that is what the schema's own spans are indexed by.
+#[test]
+fn an_error_inside_an_optional_member_still_gets_its_caret() {
+    let schema = "name \"string\"\nlisten {\n  tls? \"boool\"\n}\n";
+    let e = Schema::parse(schema).expect_err("should not compile");
+
+    assert_eq!(e.line_col(schema), (3, 3));
+    let rendered = e.render(schema);
+    assert!(rendered.contains("`boool` is not a type"), "{rendered}");
+    assert!(rendered.contains("^^^^"), "{rendered}");
 }
 
 /// A schema error points at the key it went wrong at, the same as any other diagnostic.

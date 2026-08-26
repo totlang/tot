@@ -206,8 +206,9 @@ pub fn format_value(value: &Value) -> String {
     let mut out = String::new();
     match value {
         // A root object is written without its braces — the whole point of the language. An
-        // empty one keeps them, because a file of nothing is a poor way to say `{}`, and it
-        // is what `format` writes for the same document.
+        // empty one keeps them, because a file of nothing is a poor way to say `{}`. This is
+        // the one place the two emitters differ: `format` leaves an empty file empty, having
+        // source to preserve and no reason to put anything into it.
         Value::Object(map) if !map.is_empty() => {
             for (key, member) in map.iter() {
                 write_member(&mut out, key, member, 0);

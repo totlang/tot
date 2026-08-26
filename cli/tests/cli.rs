@@ -788,3 +788,43 @@ fn help_is_printed_with_no_arguments() {
         assert!(out.stdout.contains("USAGE"), "{}", out.stdout);
     }
 }
+
+/// The help's schema example, run as a schema.
+///
+/// It once showed unquoted type names — the design the parser refuses — and nothing caught it,
+/// because the only test of the help asserted that it contained the word USAGE. Documentation
+/// that can be executed should be.
+#[test]
+fn the_help_teaches_a_schema_that_works() {
+    let help = run(&["help"], "").stdout;
+
+    // The examples are indented one step further than the section body they sit in, and the
+    // block ends at the blank line before the prose picks up again.
+    let section = help
+        .split_once("SCHEMA\n")
+        .expect("a SCHEMA section")
+        .1
+        .lines()
+        .skip_while(|line| !line.starts_with("        "))
+        .take_while(|line| line.starts_with("        "))
+        .map(|line| line.trim_start())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(section.contains("regions"), "extracted:\n{section}");
+
+    let dir = TempDir::new("help-schema");
+    let schema = dir.file("from-help.tot");
+    std::fs::write(&schema, &section).expect("write");
+    let flag = format!("--schema={}", arg(&schema));
+
+    // It compiles, and it describes the document it appears to describe.
+    let good = "name \"svc\"\nlisten {host \"::\" port 80}\nregions [\"us-west-2\"]\n\
+                labels {team \"core\"}\nretries null\n";
+    let out = run(&["check", &flag], good);
+    assert_eq!(out.code, 0, "the help's own schema: {}", out.stderr);
+
+    // And it is a real check, not one that accepts anything.
+    let out = run(&["check", &flag], "name 1\nlisten {host \"::\" port 80}\n");
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("expected string"), "{}", out.stderr);
+}

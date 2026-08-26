@@ -231,11 +231,15 @@ fn tot_to_toml(
 
 // --- paths, for diagnostics ---------------------------------------------------------------
 
+/// Every path a converter reports is a real path, so it can be handed to `tot get`. A key is
+/// spelled the way a path spells one — joining with a bare `.` would turn a key holding a dot
+/// into a chain of members that do not exist, and one holding a space into nothing at all.
 fn child(path: &str, key: &str) -> String {
+    let segment = tot::Path::segment(key);
     if path.is_empty() {
-        key.to_string()
+        segment
     } else {
-        format!("{path}.{key}")
+        format!("{path}.{segment}")
     }
 }
 
