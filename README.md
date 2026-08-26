@@ -72,18 +72,20 @@ package, or use `--workspace`.
 |---|---|
 | `tot fmt [--check] [FILE]...` | format in place; `--check` writes nothing and exits 1 on a diff |
 | `tot check [--strict] [FILE]...` | parse and report diagnostics |
+| `tot merge [FILE]...` | fold documents together, left to right |
 | `tot get [--raw] <PATH> [FILE]` | print the one value at PATH |
 | `tot to <json\|yaml\|toml> [FILE]` | write this document as another format |
 | `tot from <json\|yaml\|toml> [FILE]` | read another format and write tot |
 
-No FILE means stdin. Every input is processed before exiting — one bad file doesn't hide the
-rest. Exit codes: `0` ok, `1` the input didn't answer the request (unformatted, unparseable, or
-no such path), `2` I/O or bad arguments.
+No FILE means stdin, and so does a FILE of `-` (a file actually named `-` is `./-`). For `fmt`
+and `check`, every input is processed before exiting — one bad file doesn't hide the rest.
+Exit codes: `0` ok, `1` the input didn't answer the request (unformatted, unparseable, or no
+such path), `2` I/O or bad arguments.
 
-Flags: `--raw` (`get`), `--compact` (`to json`), `--null=omit|error` (`to toml`, default
-`omit`). A flag that doesn't apply to the chosen format is an error, not a no-op. A bare `--`
-ends the flags — `-` is a bareword character, so `--foo` is a legal key and a legal path, and
-a file can be named that way: `tot get -- --foo config.tot`.
+Flags: `--raw` (`get`), `--null=set|delete` (`merge`, default `set`), `--compact` (`to json`),
+`--null=omit|error` (`to toml`, default `omit`). A flag that doesn't apply to the chosen format
+is an error, not a no-op. A bare `--` ends the flags — `-` is a bareword character, so `--foo`
+is a legal key and a legal path, and a file can be named that way: `tot get -- --foo config.tot`.
 
 `check --strict` adds one lint: **a member's value must begin on its key's line.** A `{`, `[`,
 or `"""` may still run past it — only the start has to sit beside the key. Everything it
@@ -92,6 +94,24 @@ a missing value shifts every member after it, and while quoted string values cat
 of those at the offending token, keeping members on one line is what makes the error land in
 the right place every time. **`tot fmt` fixes what it reports** — the formatter pulls the
 value back up onto the key's line.
+
+`merge` is base-plus-overlays:
+
+```bash
+tot merge base.tot staging.tot regional/eu.tot
+```
+
+**Two objects merge member by member; anything else is replaced whole.** An array replaces
+rather than appending — concatenation can't be undone by a later layer, so an overlay that
+could only ever add would be a one-way door. A change of kind replaces too, at the root or
+anywhere else. Base members keep their position; new ones append.
+
+An overlay's `null` sets the member to null, because null is a real value here. `--null=delete`
+removes it instead, which is how a layer takes something away — nested, so `a {b null}` deletes
+`a.b`. A `null` at the root or inside an array is data either way.
+
+One bad layer ends the run (there's a single output, and a partial merge is worse than none),
+and comments don't survive, the same way they don't through `from`.
 
 `get` takes a path where `.` selects a member and `[n]` an element:
 
@@ -130,6 +150,7 @@ keys where legal, indents two spaces, and emits LF.
 let value = tot::parse(src)?;                     // -> Value
 let text  = tot::format(src)?;                    // canonical tot, source -> source
 let text  = tot::format_value(&value);            // Value -> tot
+let folded = tot::merge(documents, tot::Nulls::Set);   // or merge_into(&mut base, overlay, …)
 let json  = tot::json::to_string_pretty(&value);
 let warns = tot::lint(src)?;                      // -> Vec<Warning>, all legal-but-risky
 let at    = tot::Path::parse("a.b[0]")?.get(&value)?;
@@ -204,6 +225,7 @@ src/                tot — library, zero dependencies
   cst.rs            lossless tree: comments, blank lines, inline/block choice
   fmt.rs            formatter (over the CST) + Value -> tot emitter
   lint.rs           opt-in checks (over the CST); nothing here is a language rule
+  merge.rs          folding documents together, left to right
   path.rs           `a.b[0]` paths — a CLI convenience, not part of the language
   json.rs           JSON output only
   serde/            optional; ser.rs and de.rs, both via Value
@@ -232,9 +254,12 @@ formatting preserves the parsed value, and formatting is idempotent.
 
 ## Next
 
-Building larger documents out of smaller ones is designed but not built:
-[Composition](SPEC.md#composition-prospective) in the spec has the reasoning and what's still
-open. The short version — `tot merge` and `tot set` need no language change and should come
-first, because they measure whether anything else is needed; a template layer, if it happens,
-lives in its own file type so `.tot` stays data. Schema validation is ranked ahead of all of
-it, because a document that builds and is wrong is the failure that actually gets hit.
+`tot merge` is built. Still open, in rough order:
+
+- **`tot set <path> <value>`** — the dual of `get`, finishing that pair.
+- **Schema validation** (`tot check --schema schema.tot`, schema written in tot). Ranked ahead
+  of any templating: a document that builds and is wrong is the failure that actually gets hit.
+- **A template layer**, if `merge` and `set` turn out not to be enough. The design — parens for
+  forms, no user-defined functions, a separate file type so `.tot` stays data — is written up
+  under [Composition](SPEC.md#composition-prospective), along with why the alternatives lose.
+  It's deliberately not built yet: `merge` is the measurement that says whether it's needed.

@@ -208,6 +208,93 @@ fn check_strict_flags_members_split_across_lines() {
     );
 }
 
+// --- merge --------------------------------------------------------------------------------
+
+#[test]
+fn merge_folds_files_left_to_right() {
+    let dir = TempDir::new("merge");
+    let base = dir.file("base.tot");
+    let overlay = dir.file("prod.tot");
+    std::fs::write(&base, "name \"svc\"\nlisten {host \"::\" port 80}\n").expect("write");
+    std::fs::write(&overlay, "listen {port 8080}\nreplicas 3\n").expect("write");
+
+    let out = run(&["merge", arg(&base), arg(&overlay)], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.stdout,
+        "name \"svc\"\nlisten {\n  host \"::\"\n  port 8080\n}\nreplicas 3\n"
+    );
+    // The output is a document, so it goes straight back into the CLI.
+    assert_eq!(
+        json(&out.stdout),
+        r#"{"name":"svc","listen":{"host":"::","port":8080},"replicas":3}"#.to_string() + "\n"
+    );
+}
+
+/// A `-` layer is how a merge takes part in a pipeline.
+#[test]
+fn merge_reads_stdin_as_a_layer() {
+    let dir = TempDir::new("merge-stdin");
+    let base = dir.file("base.tot");
+    std::fs::write(&base, "a 1 b 2\n").expect("write");
+
+    assert_eq!(
+        json(&run(&["merge", arg(&base), "-"], "b 9 c 3").stdout),
+        "{\"a\":1,\"b\":9,\"c\":3}\n"
+    );
+    // And on the other side, where the file wins.
+    assert_eq!(
+        json(&run(&["merge", "-", arg(&base)], "b 9 c 3").stdout),
+        "{\"b\":2,\"c\":3,\"a\":1}\n"
+    );
+}
+
+#[test]
+fn merge_null_deletes_only_when_asked() {
+    let doc = "a null\n";
+    let dir = TempDir::new("merge-null");
+    let base = dir.file("base.tot");
+    std::fs::write(&base, "a 1 b 2\n").expect("write");
+
+    assert_eq!(
+        json(&run(&["merge", arg(&base), "-"], doc).stdout),
+        "{\"a\":null,\"b\":2}\n"
+    );
+    assert_eq!(
+        json(&run(&["merge", "--null=delete", arg(&base), "-"], doc).stdout),
+        "{\"b\":2}\n"
+    );
+}
+
+/// One output, so one bad layer is the end of it — a document merged from only some of its
+/// layers would be worse than nothing.
+#[test]
+fn merge_stops_at_a_bad_layer() {
+    let dir = TempDir::new("merge-bad");
+    let bad = dir.file("bad.tot");
+    std::fs::write(&bad, "kind curly").expect("write");
+
+    let out = run(&["merge", arg(&bad), "-"], "a 1");
+    assert_eq!(out.code, 1);
+    assert!(out.stdout.is_empty(), "{}", out.stdout);
+    assert!(
+        out.stderr.contains("string values must be quoted"),
+        "{}",
+        out.stderr
+    );
+
+    let missing = run(&["merge", "definitely-not-a-real-file.tot"], "");
+    assert_eq!(missing.code, 2);
+}
+
+#[test]
+fn merge_with_one_input_is_that_document() {
+    assert_eq!(
+        run(&["merge"], "a:1,b:[2,3]").stdout,
+        "a 1\nb [\n  2\n  3\n]\n"
+    );
+}
+
 // --- get ----------------------------------------------------------------------------------
 
 #[test]
@@ -322,6 +409,23 @@ fn get_reaches_a_key_that_needs_quoting() {
         "{}",
         out.stderr
     );
+}
+
+/// `-` means stdin everywhere a FILE is taken, not only in a merge.
+#[test]
+fn a_dash_is_stdin_for_every_command() {
+    assert_eq!(run(&["fmt", "-"], "a:1").stdout, "a 1\n");
+    assert_eq!(run(&["check", "-"], "a 1").code, 0);
+    assert_eq!(run(&["get", "a", "-"], "a 1").stdout, "1\n");
+    assert_eq!(
+        run(&["to", "json", "--compact", "-"], "a 1").stdout,
+        "{\"a\":1}\n"
+    );
+
+    // The diagnostic calls it stdin rather than `-`.
+    let out = run(&["check", "-"], "kind curly");
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("in <stdin>"), "{}", out.stderr);
 }
 
 #[test]

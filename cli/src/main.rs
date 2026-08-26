@@ -14,22 +14,31 @@ USAGE
     tot fmt [--check] [FILE]...   format in place, or stdin to stdout
     tot check [--strict] [FILE]...
                                   parse and report errors
+    tot merge [FILE]...           fold documents together, left to right
     tot get <PATH> [FILE]         print the one value at PATH
     tot to <FORMAT> [FILE]        write this document as json, yaml, or toml
     tot from <FORMAT> [FILE]      read json, yaml, or toml and write tot
     tot help
 
-With no FILE, input is read from stdin.
+With no FILE, input is read from stdin. A FILE of `-` is stdin too, so it can be
+one layer of a merge; a file actually named `-` is `./-`.
 
 FLAGS
     --check         fmt: write nothing, and exit 1 if any file would change
     --strict        check: also warn when a member's value is not on its key's line
     --raw           get: print a string with no quotes and no escapes
+    --null=set      merge: an overlay's null sets the member to null (default)
+    --null=delete   merge: an overlay's null removes the member instead
     --compact       to json: one line instead of indented
     --null=omit     to toml: drop null members and elements, reporting each (default)
     --null=error    to toml: refuse to convert instead
     --              end the flags; `-` is a bareword character, so a key, a path,
                     or a file may itself start with `--`
+
+MERGE
+    Objects merge member by member; anything else is replaced whole. An array
+    replaces rather than appending, because concatenation cannot be undone by a
+    later layer. Comments do not survive, the way they do not through `from`.
 
 PATHS
     `.` selects a member and `[n]` an element: `listen.port`, `regions[0].name`.
@@ -65,6 +74,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     match command {
         "fmt" => fmt(&args[1..]),
         "check" => check(&args[1..]),
+        "merge" => merge(&args[1..]),
         "get" => get(&args[1..]),
         "to" => to(&args[1..]),
         "from" => from(&args[1..]),
@@ -173,6 +183,34 @@ fn check(args: &[String]) -> Result<ExitCode, String> {
     }
 
     Ok(status.into())
+}
+
+/// Folds documents together, left to right, and writes the result.
+///
+/// Unlike `fmt`, one bad input is the end of the run: there is a single output here, and a
+/// document merged from only some of its layers is worse than no output at all.
+fn merge(args: &[String]) -> Result<ExitCode, String> {
+    let (flags, files) = split(args);
+    let mut nulls = tot::Nulls::Set;
+    for flag in flags {
+        match flag {
+            "--null=set" => nulls = tot::Nulls::Set,
+            "--null=delete" => nulls = tot::Nulls::Delete,
+            other => return Err(unknown_flag(other)),
+        }
+    }
+
+    let mut documents = Vec::new();
+    for source in sources(&files) {
+        let src = source.read_now()?;
+        let Some(value) = parse_or_report(&src, source.label()) else {
+            return Ok(ExitCode::from(1));
+        };
+        documents.push(value);
+    }
+
+    print!("{}", tot::format_value(&tot::merge(documents, nulls)));
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Prints one value out of a document.
@@ -309,7 +347,10 @@ fn from(args: &[String]) -> Result<ExitCode, String> {
 
 /// What to call an input in a diagnostic.
 fn label(file: Option<&str>) -> &str {
-    file.unwrap_or("<stdin>")
+    match file {
+        None | Some("-") => "<stdin>",
+        Some(path) => path,
+    }
 }
 
 /// Parses one document, reporting the diagnostic and answering `None` if it does not parse.
@@ -334,6 +375,15 @@ enum Source {
 }
 
 impl Source {
+    /// Resolves one name from the command line. `-` is stdin, as it is nearly everywhere; a
+    /// file actually named `-` is `./-`.
+    fn named(path: &str) -> Self {
+        match path {
+            "-" => Source::Stdin,
+            path => Source::File(path.to_string()),
+        }
+    }
+
     fn label(&self) -> &str {
         match self {
             Source::Stdin => "<stdin>",
@@ -341,13 +391,17 @@ impl Source {
         }
     }
 
-    /// Reads the source, reporting and recording a failure rather than aborting the run.
-    fn read(&self, status: &mut Status) -> Option<String> {
-        let result = match self {
+    /// Reads the source, failing the whole command.
+    fn read_now(&self) -> Result<String, String> {
+        match self {
             Source::Stdin => read_stdin(),
             Source::File(path) => read_file(path),
-        };
-        match result {
+        }
+    }
+
+    /// Reads the source, reporting and recording a failure rather than aborting the run.
+    fn read(&self, status: &mut Status) -> Option<String> {
+        match self.read_now() {
             Ok(src) => Some(src),
             Err(message) => {
                 eprintln!("tot: {message}");
@@ -362,10 +416,7 @@ fn sources(files: &[&str]) -> Vec<Source> {
     if files.is_empty() {
         return vec![Source::Stdin];
     }
-    files
-        .iter()
-        .map(|path| Source::File((*path).to_string()))
-        .collect()
+    files.iter().copied().map(Source::named).collect()
 }
 
 /// The worst outcome seen so far, so that every input is processed before exiting.
@@ -480,8 +531,5 @@ fn read_file(path: &str) -> Result<String, String> {
 }
 
 fn read_input(file: Option<&str>) -> Result<String, String> {
-    match file {
-        Some(path) => read_file(path),
-        None => read_stdin(),
-    }
+    Source::named(file.unwrap_or("-")).read_now()
 }

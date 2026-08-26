@@ -352,6 +352,16 @@ impl Map {
     }
 }
 
+/// Members in insertion order, by value, for a caller that is taking the map apart.
+impl IntoIterator for Map {
+    type Item = (String, Value);
+    type IntoIter = std::vec::IntoIter<(String, Value)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
 /// Order-sensitive: two maps with the same members in a different order are not equal.
 impl PartialEq for Map {
     fn eq(&self, other: &Self) -> bool {

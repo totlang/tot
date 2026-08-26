@@ -312,12 +312,14 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
 ```
 tot fmt [--check] [FILE]...       format in place, or stdin to stdout
 tot check [--strict] [FILE]...    parse and report errors
+tot merge [--null=…] [FILE]...    fold documents together, left to right
 tot get [--raw] <PATH> [FILE]     print the one value at PATH
 tot to <json|yaml|toml> [FILE]    write this document as another format
 tot from <json|yaml|toml> [FILE]  read another format and write tot
 ```
 
-- Extension `.tot`. With no FILE, input is read from stdin.
+- Extension `.tot`. With no FILE, input is read from stdin. A FILE of `-` is stdin as well, so
+  a pipeline can be one layer of a merge; a file actually named `-` is `./-`.
 - `--check` on `fmt`: write nothing, exit 1 if any file would change.
 - `--strict` on `check`: also warn about the split-member shape above. Everything it reports
   is legal tot, so it is opt-in.
@@ -336,6 +338,27 @@ tot from <json|yaml|toml> [FILE]  read another format and write tot
   reachable.
 - `tot fmt` pulls a value back onto its key's line, so it repairs exactly what
   `check --strict` reports.
+
+### Merge
+
+`merge` folds documents left to right. **Two objects merge member by member; anything else is
+replaced whole.** See [Composition](#composition-prospective) for why the alternatives were
+rejected.
+
+- An **array replaces** rather than appending. Concatenation cannot be undone by a later
+  layer, so an overlay that could only ever add would be a one-way door.
+- A **change of kind replaces**, at the root as well as anywhere else. There is no sensible
+  way to fold a string into an array, and guessing at one is how these systems become
+  unpredictable.
+- A member the base already has keeps its position; one only the overlay has is appended in
+  the order the overlay wrote it. Key order is part of a document, so a merge does not
+  reshuffle it.
+- `--null=set` (the default) treats an overlay's `null` as the ordinary value it is.
+  `--null=delete` removes the member instead, which is how an overlay takes something away.
+  Deleting is a member-level operation: a `null` at the root, or inside an array, is data.
+- Unlike `fmt`, one bad input ends the run. There is a single output, and a document merged
+  from only some of its layers is worse than none.
+- Comments do not survive, the same way they do not through `from` — the fold is over values.
 - `from json` has no conversion step. Every JSON document is already valid tot, so it reads
   the input with the ordinary parser and reformats — the JSON direction needs no code at all,
   which is goal #2 paying for itself.
@@ -408,9 +431,10 @@ index   = "[" [0-9]+ "]"
 
 ## Composition (prospective)
 
-**Nothing in this section is implemented or decided.** It is the design deliberation for
-building larger documents out of smaller ones, kept here so the reasoning survives the
-conversation that produced it.
+The design deliberation for building larger documents out of smaller ones, kept here so the
+reasoning survives the conversation that produced it. **`tot merge` is built** — its rules are
+normative under [Merge](#merge) above. Everything below it in this section is neither
+implemented nor decided.
 
 The need is real: base configuration plus per-environment overlays, a fragment shared by
 several documents, a value that appears in five places. Every config format grows this
@@ -441,15 +465,16 @@ tot set <path> <value> [FILE]
   operation, and a `--null=delete` flag would spell it — matching the `--null=omit|error`
   vocabulary `to toml` already uses.
 
-`set` is the dual of `get`, and finishes that pair.
-
-Both are small. `Map::get_mut` and `Map::remove` already exist and are exactly what a
-recursive merge needs.
+`set` is the dual of `get`, and finishes that pair. It is not built yet.
 
 **These come first, and not only because they are cheap.** They are the measurement: with
 layering in hand, whatever composition is still awkward is a specific, nameable thing rather
 than a guess. Designing an expression language before that is designing against an imagined
 requirement.
+
+`merge` landed at about seventy lines, most of which is the doc comment explaining why an
+array replaces. `Map::get_mut` and `Map::remove`, added a commit earlier for unrelated
+reasons, turned out to be exactly what a recursive fold needs.
 
 ### If syntax is still wanted: forms
 

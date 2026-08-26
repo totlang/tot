@@ -21,6 +21,7 @@ mod error;
 mod fmt;
 mod lex;
 mod lint;
+mod merge;
 mod parse;
 mod path;
 mod value;
@@ -33,6 +34,7 @@ pub mod serde;
 pub use error::{Error, Span};
 pub use fmt::{format, format_value};
 pub use lint::{Warning, lint};
+pub use merge::{Nulls, merge, merge_into};
 pub use parse::parse;
 pub use path::Path;
 #[cfg(feature = "serde")]
