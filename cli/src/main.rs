@@ -28,7 +28,7 @@ FLAGS
 EXIT CODES
     0   success
     1   a file is unformatted, or a document failed to parse
-    2   something else went wrong
+    2   a file could not be read or written, or the command line was wrong
 
 NOTE
     `from json` has no conversion step: every JSON document is already a valid tot
@@ -68,6 +68,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     }
 }
 
+/// Formats every input it was given, and keeps going when one of them fails: a bad file in
+/// the middle of a directory must not leave the rest unformatted and unreported.
 fn fmt(args: &[String]) -> Result<ExitCode, String> {
     let (flags, files) = split(args);
     let mut check_only = false;
@@ -78,40 +80,45 @@ fn fmt(args: &[String]) -> Result<ExitCode, String> {
         }
     }
 
-    if files.is_empty() {
-        let src = read_stdin()?;
-        let formatted = tot::format(&src).map_err(|e| e.render(&src))?;
-        if !check_only {
-            print!("{formatted}");
-            return Ok(ExitCode::SUCCESS);
-        }
-        if formatted == src {
-            return Ok(ExitCode::SUCCESS);
-        }
-        eprintln!("tot: <stdin> is not formatted");
-        return Ok(ExitCode::from(1));
-    }
+    let mut status = Status::default();
+    for source in sources(&files) {
+        let Some(src) = source.read(&mut status) else {
+            continue;
+        };
+        let formatted = match tot::format(&src) {
+            Ok(formatted) => formatted,
+            Err(e) => {
+                eprintln!("tot: in {}", source.label());
+                eprint!("{}", e.render(&src));
+                status.invalid();
+                continue;
+            }
+        };
 
-    let mut unformatted = false;
-    for file in files {
-        let src = read_file(file)?;
-        let formatted = tot::format(&src).map_err(|e| format!("in {file}\n{}", e.render(&src)))?;
+        if let (Source::Stdin, false) = (&source, check_only) {
+            print!("{formatted}");
+            continue;
+        }
         if formatted == src {
             continue;
         }
-        unformatted = true;
-        if check_only {
-            eprintln!("tot: {file} is not formatted");
-        } else {
-            std::fs::write(file, &formatted).map_err(|e| format!("{file}: {e}"))?;
+        match (&source, check_only) {
+            // Rewriting a file is success; only --check treats a change as a failure.
+            (_, true) => {
+                status.invalid();
+                eprintln!("tot: {} is not formatted", source.label());
+            }
+            (Source::File(path), false) => {
+                if let Err(e) = std::fs::write(path, &formatted) {
+                    eprintln!("tot: {path}: {e}");
+                    status.broken();
+                }
+            }
+            (Source::Stdin, false) => unreachable!("handled above"),
         }
     }
 
-    Ok(if check_only && unformatted {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
-    })
+    Ok(status.into())
 }
 
 fn check(args: &[String]) -> Result<ExitCode, String> {
@@ -120,28 +127,19 @@ fn check(args: &[String]) -> Result<ExitCode, String> {
         return Err(unknown_flag(flag));
     }
 
-    let mut failed = false;
-    if files.is_empty() {
-        let src = read_stdin()?;
+    let mut status = Status::default();
+    for source in sources(&files) {
+        let Some(src) = source.read(&mut status) else {
+            continue;
+        };
         if let Err(e) = tot::parse(&src) {
+            eprintln!("tot: in {}", source.label());
             eprint!("{}", e.render(&src));
-            failed = true;
-        }
-    }
-    for file in files {
-        let src = read_file(file)?;
-        if let Err(e) = tot::parse(&src) {
-            eprintln!("tot: in {file}");
-            eprint!("{}", e.render(&src));
-            failed = true;
+            status.invalid();
         }
     }
 
-    Ok(if failed {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
-    })
+    Ok(status.into())
 }
 
 fn to(args: &[String]) -> Result<ExitCode, String> {
@@ -150,11 +148,22 @@ fn to(args: &[String]) -> Result<ExitCode, String> {
 
     let mut compact = false;
     let mut nulls = NullPolicy::Omit;
+    // Flags are checked against the format that was actually chosen, so one that cannot
+    // apply is an error rather than a silent no-op.
     for flag in flags {
         match flag {
-            "--compact" => compact = true,
-            "--null=omit" => nulls = NullPolicy::Omit,
-            "--null=error" => nulls = NullPolicy::Error,
+            "--compact" => {
+                only_for(format, Format::Json, flag)?;
+                compact = true;
+            }
+            "--null=omit" => {
+                only_for(format, Format::Toml, flag)?;
+                nulls = NullPolicy::Omit;
+            }
+            "--null=error" => {
+                only_for(format, Format::Toml, flag)?;
+                nulls = NullPolicy::Error;
+            }
             other => return Err(unknown_flag(other)),
         }
     }
@@ -163,22 +172,21 @@ fn to(args: &[String]) -> Result<ExitCode, String> {
     let value = tot::parse(&src).map_err(|e| e.render(&src))?;
 
     let out = match format {
-        "json" => {
+        Format::Json => {
             if compact {
                 tot::json::to_string(&value)
             } else {
                 tot::json::to_string_pretty(&value)
             }
         }
-        "yaml" => convert::to_yaml(&value)?,
-        "toml" => {
+        Format::Yaml => convert::to_yaml(&value)?,
+        Format::Toml => {
             let (text, dropped) = convert::to_toml(&value, nulls)?;
             for path in &dropped {
                 eprintln!("tot: dropped null at {path} — TOML has no null");
             }
             text
         }
-        other => return Err(unknown_format(other)),
     };
 
     print!("{out}");
@@ -198,23 +206,115 @@ fn from(args: &[String]) -> Result<ExitCode, String> {
 
     let value = match format {
         // Nothing to convert: JSON is tot.
-        "json" => tot::parse(&src).map_err(|e| e.render(&src))?,
-        "yaml" => convert::from_yaml(&src)?,
-        "toml" => {
+        Format::Json => tot::parse(&src).map_err(|e| e.render(&src))?,
+        Format::Yaml => convert::from_yaml(&src)?,
+        Format::Toml => {
             let (value, datetimes) = convert::from_toml(&src)?;
             for path in &datetimes {
                 eprintln!("tot: datetime at {path} became a string — tot has no date type");
             }
             value
         }
-        other => return Err(unknown_format(other)),
     };
 
     print!("{}", tot::format_value(&value));
     Ok(ExitCode::SUCCESS)
 }
 
+// --- inputs -------------------------------------------------------------------------------
+
+/// What a command was pointed at. With no files named, that is stdin.
+enum Source {
+    Stdin,
+    File(String),
+}
+
+impl Source {
+    fn label(&self) -> &str {
+        match self {
+            Source::Stdin => "<stdin>",
+            Source::File(path) => path,
+        }
+    }
+
+    /// Reads the source, reporting and recording a failure rather than aborting the run.
+    fn read(&self, status: &mut Status) -> Option<String> {
+        let result = match self {
+            Source::Stdin => read_stdin(),
+            Source::File(path) => read_file(path),
+        };
+        match result {
+            Ok(src) => Some(src),
+            Err(message) => {
+                eprintln!("tot: {message}");
+                status.broken();
+                None
+            }
+        }
+    }
+}
+
+fn sources(files: &[&str]) -> Vec<Source> {
+    if files.is_empty() {
+        return vec![Source::Stdin];
+    }
+    files
+        .iter()
+        .map(|path| Source::File((*path).to_string()))
+        .collect()
+}
+
+/// The worst outcome seen so far, so that every input is processed before exiting.
+#[derive(Default)]
+struct Status(u8);
+
+impl Status {
+    /// A document is unformatted or failed to parse.
+    fn invalid(&mut self) {
+        self.0 = self.0.max(1);
+    }
+
+    /// A file could not be read or written.
+    fn broken(&mut self) {
+        self.0 = self.0.max(2);
+    }
+}
+
+impl From<Status> for ExitCode {
+    fn from(status: Status) -> Self {
+        ExitCode::from(status.0)
+    }
+}
+
 // --- argument plumbing --------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq)]
+enum Format {
+    Json,
+    Yaml,
+    Toml,
+}
+
+impl Format {
+    fn parse(name: &str) -> Result<Self, String> {
+        match name {
+            "json" => Ok(Format::Json),
+            "yaml" => Ok(Format::Yaml),
+            "toml" => Ok(Format::Toml),
+            other => Err(format!(
+                "unknown format `{other}` — expected json, yaml, or toml"
+            )),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Format::Json => "json",
+            Format::Yaml => "yaml",
+            Format::Toml => "toml",
+        }
+    }
+}
 
 fn split(args: &[String]) -> (Vec<&str>, Vec<&str>) {
     args.iter()
@@ -222,8 +322,8 @@ fn split(args: &[String]) -> (Vec<&str>, Vec<&str>) {
         .partition(|arg| arg.starts_with("--"))
 }
 
-fn target<'a>(positional: &[&'a str], command: &str) -> Result<(&'a str, Option<&'a str>), String> {
-    let Some(format) = positional.first().copied() else {
+fn target<'a>(positional: &[&'a str], command: &str) -> Result<(Format, Option<&'a str>), String> {
+    let Some(name) = positional.first().copied() else {
         return Err(format!(
             "`tot {command}` needs a format: json, yaml, or toml"
         ));
@@ -231,15 +331,22 @@ fn target<'a>(positional: &[&'a str], command: &str) -> Result<(&'a str, Option<
     if positional.len() > 2 {
         return Err(format!("`tot {command}` takes at most one file"));
     }
-    Ok((format, positional.get(1).copied()))
+    Ok((Format::parse(name)?, positional.get(1).copied()))
+}
+
+fn only_for(format: Format, wanted: Format, flag: &str) -> Result<(), String> {
+    if format == wanted {
+        return Ok(());
+    }
+    Err(format!(
+        "`{flag}` applies only to `tot to {}`, not `{}`",
+        wanted.name(),
+        format.name()
+    ))
 }
 
 fn unknown_flag(flag: &str) -> String {
     format!("unknown flag `{flag}` — try `tot help`")
-}
-
-fn unknown_format(format: &str) -> String {
-    format!("unknown format `{format}` — expected json, yaml, or toml")
 }
 
 fn read_stdin() -> Result<String, String> {

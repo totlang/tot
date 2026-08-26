@@ -295,8 +295,11 @@ tot from <json|yaml|toml> [FILE]  read another format and write tot
 - `--check` on `fmt`: write nothing, exit 1 if any file would change.
 - `--compact` on `to json`: one line instead of indented.
 - `--null=omit|error` on `to toml`, defaulting to `omit`.
-- Exit codes: `0` success, `1` a file is unformatted or a document failed to parse, `2`
-  anything else.
+- Exit codes: `0` success, `1` a file is unformatted or a document failed to parse, `2` a file
+  could not be read or written or the command line was wrong. Every input is processed before
+  exiting, so one unparseable file in a directory does not hide the rest.
+- A flag that cannot apply to the chosen format is an error rather than a silent no-op:
+  `tot to yaml --compact` is refused.
 - `from json` has no conversion step. Every JSON document is already valid tot, so it reads
   the input with the ordinary parser and reformats — the JSON direction needs no code at all,
   which is goal #2 paying for itself.

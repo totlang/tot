@@ -94,6 +94,16 @@ b {
     assert_eq!(f(src), src);
 }
 
+/// A value root has no member to hang a trailing comment on, so the document itself keeps it.
+#[test]
+fn a_trailing_comment_on_a_value_root_survives() {
+    assert_eq!(f("[1 2] # note"), "[1 2] # note\n");
+    assert_eq!(f("{a 1} # note"), "{a 1} # note\n");
+    assert_eq!(f("42 # note"), "42 # note\n");
+    assert_eq!(f("[\n  1\n] # tail"), "[\n  1\n] # tail\n");
+    assert_eq!(f("# lead\n[1 2] # tail\n"), "# lead\n[1 2] # tail\n");
+}
+
 #[test]
 fn a_document_of_only_comments_survives() {
     assert_eq!(f("# just a note\n"), "# just a note\n");

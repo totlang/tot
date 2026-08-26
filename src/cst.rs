@@ -7,7 +7,7 @@
 //! needed.
 
 use crate::error::{Error, Span};
-use crate::lex::{Token, TokenKind, is_bareword_char, tokenize};
+use crate::lex::{Token, TokenKind, can_be_bare, tokenize};
 
 /// One line of the run-up to an item.
 #[derive(Debug)]
@@ -57,6 +57,9 @@ pub(crate) struct Document<'a> {
     /// owns its own lead.
     pub lead: Vec<Lead<'a>>,
     pub body: Body<'a>,
+    /// A comment on the same line as the end of a [`Body::Value`] document. A member list has
+    /// no use for this — there the comment belongs to the last member.
+    pub trailing: Option<&'a str>,
     pub tail: Vec<Lead<'a>>,
 }
 
@@ -86,6 +89,7 @@ impl<'a> Builder<'a> {
             return Ok(Document {
                 lead,
                 body: Body::Members(Vec::new()),
+                trailing: None,
                 tail: Vec::new(),
             });
         }
@@ -96,11 +100,13 @@ impl<'a> Builder<'a> {
             || self.tokens.len() == 1;
         if single {
             let node = self.node()?;
-            let (_, mut tail) = self.split_gap(true);
+            // There is no member here to hang a trailing comment on, so the document keeps it.
+            let (trailing, mut tail) = self.split_gap(true);
             trim_trailing_blanks(&mut tail);
             return Ok(Document {
                 lead,
                 body: Body::Value(node),
+                trailing,
                 tail,
             });
         }
@@ -114,6 +120,7 @@ impl<'a> Builder<'a> {
                 return Ok(Document {
                     lead: Vec::new(),
                     body: Body::Members(items),
+                    trailing: None,
                     tail: next_lead,
                 });
             }
@@ -264,7 +271,7 @@ impl<'a> Builder<'a> {
 /// is a legal bareword character. Otherwise the original quoting is kept verbatim, escapes
 /// and all.
 fn render_key(raw: &str, cooked: &str) -> String {
-    if !cooked.is_empty() && cooked.chars().all(is_bareword_char) {
+    if can_be_bare(cooked) {
         cooked.to_string()
     } else {
         raw.to_string()

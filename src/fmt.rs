@@ -7,7 +7,7 @@
 
 use crate::cst::{self, Body, Collection, Document, Item, Lead, Node};
 use crate::error::Error;
-use crate::lex::is_bareword_char;
+use crate::lex::can_be_bare;
 use crate::value::{Value, write_escaped};
 
 /// Format a tot document into its canonical form.
@@ -43,6 +43,10 @@ impl Printer {
             }
             Body::Value(node) => {
                 self.value(node, 0);
+                if let Some(comment) = document.trailing {
+                    self.out.push(' ');
+                    self.out.push_str(comment);
+                }
                 self.out.push('\n');
             }
         }
@@ -57,9 +61,7 @@ impl Printer {
     }
 
     fn indent(&mut self, level: usize) {
-        for _ in 0..level {
-            self.out.push_str("  ");
-        }
+        write_indent(&mut self.out, level);
     }
 
     fn leads(&mut self, leads: &[Lead<'_>], level: usize) {
@@ -259,7 +261,7 @@ fn write_value(out: &mut String, value: &Value, level: usize) {
 }
 
 fn write_key(out: &mut String, key: &str) {
-    if !key.is_empty() && key.chars().all(is_bareword_char) {
+    if can_be_bare(key) {
         out.push_str(key);
     } else {
         out.push('"');

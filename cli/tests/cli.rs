@@ -73,6 +73,75 @@ fn fmt_check_reports_unformatted_input() {
 }
 
 #[test]
+fn fmt_reports_an_unparseable_document_as_exit_one() {
+    let out = run(&["fmt"], "kind curly");
+    assert_eq!(out.code, 1);
+    assert!(out.stdout.is_empty(), "nothing should be written");
+    assert!(
+        out.stderr.contains("string values must be quoted"),
+        "{}",
+        out.stderr
+    );
+}
+
+/// One bad file must not leave the rest of a directory unformatted and unreported.
+#[test]
+fn fmt_processes_every_file_even_when_one_fails() {
+    let dir = std::env::temp_dir().join("tot-cli-fmt-continues");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let (first, bad, last) = (
+        dir.join("first.tot"),
+        dir.join("bad.tot"),
+        dir.join("last.tot"),
+    );
+    std::fs::write(&first, "a:1").expect("write");
+    std::fs::write(&bad, "kind curly").expect("write");
+    std::fs::write(&last, "b:2").expect("write");
+
+    let out = run(
+        &[
+            "fmt",
+            first.to_str().unwrap(),
+            bad.to_str().unwrap(),
+            last.to_str().unwrap(),
+        ],
+        "",
+    );
+
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(
+        out.stderr.contains("string values must be quoted"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(std::fs::read_to_string(&first).expect("read"), "a 1\n");
+    assert_eq!(std::fs::read_to_string(&last).expect("read"), "b 2\n");
+}
+
+#[test]
+fn formatting_a_file_in_place_succeeds() {
+    let dir = std::env::temp_dir().join("tot-cli-fmt-in-place");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let path = dir.join("one.tot");
+    std::fs::write(&path, "a:1").expect("write");
+
+    let out = run(&["fmt", path.to_str().unwrap()], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "a 1\n");
+}
+
+#[test]
+fn an_unreadable_file_is_exit_two() {
+    let out = run(&["check", "definitely-not-a-real-file.tot"], "");
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr.contains("definitely-not-a-real-file"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
 fn check_renders_a_diagnostic() {
     let out = run(&["check"], "address {\n  kind curly\n}");
     assert_eq!(out.code, 1);
@@ -200,6 +269,31 @@ fn unknown_commands_flags_and_formats_exit_two() {
         "{}",
         out.stderr
     );
+}
+
+/// A flag that cannot apply to the chosen format is an error, not a silent no-op — someone
+/// passing `--null=error` as a guard has to hear about it if it is doing nothing.
+#[test]
+fn flags_are_rejected_for_formats_they_do_not_apply_to() {
+    let out = run(&["to", "yaml", "--compact"], "a 1");
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr.contains("applies only to `tot to json`"),
+        "{}",
+        out.stderr
+    );
+
+    let out = run(&["to", "json", "--null=error"], "a 1");
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr.contains("applies only to `tot to toml`"),
+        "{}",
+        out.stderr
+    );
+
+    // They still work where they belong.
+    assert_eq!(run(&["to", "json", "--compact"], "a 1").code, 0);
+    assert_eq!(run(&["to", "toml", "--null=error"], "a 1").code, 0);
 }
 
 #[test]

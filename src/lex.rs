@@ -41,6 +41,13 @@ pub(crate) fn is_bareword_char(c: char) -> bool {
     !matches!(c, ',' | ':' | '"' | '{' | '}' | '[' | ']' | '#' | '=') && !c.is_whitespace()
 }
 
+/// Whether a key can be written without quotes. Keys are always strings, so this asks only
+/// whether every character survives being unquoted. Both emitters go through here so they
+/// cannot drift apart on which keys need quoting.
+pub(crate) fn can_be_bare(key: &str) -> bool {
+    !key.is_empty() && key.chars().all(is_bareword_char)
+}
+
 struct Lexer<'a> {
     src: &'a str,
     pos: usize,
@@ -86,8 +93,11 @@ impl<'a> Lexer<'a> {
                     .with_help("write `key value`, not `key = value`"));
                 }
                 _ => {
-                    while self.peek().is_some_and(is_bareword_char) {
-                        self.pos += self.peek().expect("checked").len_utf8();
+                    while let Some(c) = self.peek() {
+                        if !is_bareword_char(c) {
+                            break;
+                        }
+                        self.pos += c.len_utf8();
                     }
                     TokenKind::Bareword
                 }
@@ -110,8 +120,11 @@ impl<'a> Lexer<'a> {
             match c {
                 ' ' | '\t' | '\n' | '\r' | ',' | ':' => self.pos += 1,
                 '#' => {
-                    while !matches!(self.peek(), None | Some('\n')) {
-                        self.pos += self.peek().expect("checked").len_utf8();
+                    while let Some(c) = self.peek() {
+                        if c == '\n' {
+                            break;
+                        }
+                        self.pos += c.len_utf8();
                     }
                 }
                 // Absorbing U+00A0 and friends into a bareword would be a silent surprise.
