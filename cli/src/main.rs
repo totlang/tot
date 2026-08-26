@@ -14,6 +14,7 @@ USAGE
     tot fmt [--check] [FILE]...   format in place, or stdin to stdout
     tot check [--strict] [FILE]...
                                   parse and report errors
+    tot get <PATH> [FILE]         print the one value at PATH
     tot to <FORMAT> [FILE]        write this document as json, yaml, or toml
     tot from <FORMAT> [FILE]      read json, yaml, or toml and write tot
     tot help
@@ -23,13 +24,19 @@ With no FILE, input is read from stdin.
 FLAGS
     --check         fmt: write nothing, and exit 1 if any file would change
     --strict        check: also warn when a member's value is not on its key's line
+    --raw           get: print a string with no quotes and no escapes
     --compact       to json: one line instead of indented
     --null=omit     to toml: drop null members and elements, reporting each (default)
     --null=error    to toml: refuse to convert instead
 
+PATHS
+    `.` selects a member and `[n]` an element: `listen.port`, `regions[0].name`.
+    A `.` is an ordinary character in a tot key, so a key holding one is quoted:
+    `\"com.example\".level`. Output is tot, so it can be piped straight back in.
+
 EXIT CODES
     0   success
-    1   a file is unformatted, or a document failed to parse
+    1   a file is unformatted, a document failed to parse, or a path was not found
     2   a file could not be read or written, or the command line was wrong
 
 NOTE
@@ -56,6 +63,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     match command {
         "fmt" => fmt(&args[1..]),
         "check" => check(&args[1..]),
+        "get" => get(&args[1..]),
         "to" => to(&args[1..]),
         "from" => from(&args[1..]),
         "help" | "--help" | "-h" => {
@@ -165,6 +173,50 @@ fn check(args: &[String]) -> Result<ExitCode, String> {
     Ok(status.into())
 }
 
+/// Prints one value out of a document.
+///
+/// A path the document does not have is exit 1, not 2: the command line was fine, the document
+/// simply did not answer it. A path that is not a path at all is the command line being wrong.
+fn get(args: &[String]) -> Result<ExitCode, String> {
+    let (flags, positional) = split(args);
+    let mut raw = false;
+    for flag in flags {
+        match flag {
+            "--raw" => raw = true,
+            other => return Err(unknown_flag(other)),
+        }
+    }
+
+    let Some(text) = positional.first().copied() else {
+        return Err("`tot get` needs a path, like `listen.port`".to_string());
+    };
+    if positional.len() > 2 {
+        return Err("`tot get` takes at most one file".to_string());
+    }
+    let path = tot::Path::parse(text).map_err(|e| e.to_string())?;
+
+    let file = positional.get(1).copied();
+    let src = read_input(file)?;
+    let Some(document) = parse_or_report(&src, label(file)) else {
+        return Ok(ExitCode::from(1));
+    };
+    let value = match path.get(&document) {
+        Ok(value) => value,
+        Err(e) => {
+            // Rendered as one line: the span points into the path, so a caret under it would
+            // sit beneath a line number that belongs to the document.
+            eprintln!("tot: in {}: {e}", label(file));
+            return Ok(ExitCode::from(1));
+        }
+    };
+
+    match value {
+        tot::Value::String(s) if raw => println!("{s}"),
+        value => print!("{}", tot::format_value(value)),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn to(args: &[String]) -> Result<ExitCode, String> {
     let (flags, positional) = split(args);
     let (format, file) = target(&positional, "to")?;
@@ -192,7 +244,9 @@ fn to(args: &[String]) -> Result<ExitCode, String> {
     }
 
     let src = read_input(file)?;
-    let value = tot::parse(&src).map_err(|e| e.render(&src))?;
+    let Some(value) = parse_or_report(&src, label(file)) else {
+        return Ok(ExitCode::from(1));
+    };
 
     let out = match format {
         Format::Json => {
@@ -229,7 +283,10 @@ fn from(args: &[String]) -> Result<ExitCode, String> {
 
     let value = match format {
         // Nothing to convert: JSON is tot.
-        Format::Json => tot::parse(&src).map_err(|e| e.render(&src))?,
+        Format::Json => match parse_or_report(&src, label(file)) {
+            Some(value) => value,
+            None => return Ok(ExitCode::from(1)),
+        },
         Format::Yaml => convert::from_yaml(&src)?,
         Format::Toml => {
             let (value, datetimes) = convert::from_toml(&src)?;
@@ -245,6 +302,26 @@ fn from(args: &[String]) -> Result<ExitCode, String> {
 }
 
 // --- inputs -------------------------------------------------------------------------------
+
+/// What to call an input in a diagnostic.
+fn label(file: Option<&str>) -> &str {
+    file.unwrap_or("<stdin>")
+}
+
+/// Parses one document, reporting the diagnostic and answering `None` if it does not parse.
+///
+/// The commands that take a single input use this so that an unparseable document is exit 1
+/// like everywhere else, rather than being reported as a bad command line.
+fn parse_or_report(src: &str, label: &str) -> Option<tot::Value> {
+    match tot::parse(src) {
+        Ok(value) => Some(value),
+        Err(e) => {
+            eprintln!("tot: in {label}");
+            eprint!("{}", e.render(src));
+            None
+        }
+    }
+}
 
 /// What a command was pointed at. With no files named, that is stdin.
 enum Source {

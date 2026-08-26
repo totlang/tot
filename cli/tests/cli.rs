@@ -173,6 +173,103 @@ fn check_strict_flags_members_split_across_lines() {
     );
 }
 
+// --- get ----------------------------------------------------------------------------------
+
+#[test]
+fn get_prints_the_value_at_a_path() {
+    assert_eq!(run(&["get", "port"], DOC).stdout, "8080\n");
+    assert_eq!(run(&["get", "nested.y[1]"], DOC).stdout, "3\n");
+    assert_eq!(run(&["get", "name"], DOC).stdout, "\"svc\"\n");
+}
+
+/// The default output is tot, so a value can go straight back into the next command.
+#[test]
+fn get_output_is_a_tot_document() {
+    let out = run(&["get", "nested"], DOC);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "x 1\ny [\n  2\n  3\n]\n");
+    assert_eq!(json(&out.stdout), "{\"x\":1,\"y\":[2,3]}\n");
+}
+
+#[test]
+fn get_raw_drops_the_quotes_on_a_string() {
+    assert_eq!(run(&["get", "--raw", "name"], DOC).stdout, "svc\n");
+    // Only strings are affected; everything else is already unquoted.
+    assert_eq!(run(&["get", "--raw", "port"], DOC).stdout, "8080\n");
+}
+
+#[test]
+fn get_reads_a_file_as_well_as_stdin() {
+    let dir = std::env::temp_dir().join("tot-cli-get");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let path = dir.join("config.tot");
+    std::fs::write(&path, DOC).expect("write");
+
+    let out = run(&["get", "--raw", "name", path.to_str().unwrap()], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "svc\n");
+}
+
+/// A path the document does not have is exit 1: the command line was fine, the document just
+/// did not answer it. A path that is not a path is exit 2.
+#[test]
+fn get_separates_a_missing_path_from_a_bad_one() {
+    let missing = run(&["get", "nested.z"], DOC);
+    assert_eq!(missing.code, 1);
+    assert!(missing.stdout.is_empty(), "{}", missing.stdout);
+    assert!(
+        missing.stderr.contains("no member `z`"),
+        "{}",
+        missing.stderr
+    );
+    assert!(
+        missing.stderr.contains("members are x, y"),
+        "{}",
+        missing.stderr
+    );
+
+    let malformed = run(&["get", "nested..z"], DOC);
+    assert_eq!(malformed.code, 2);
+    assert!(
+        malformed.stderr.contains("expected a member name"),
+        "{}",
+        malformed.stderr
+    );
+}
+
+/// The `.` in a key is the trap `get` has to get right: it nests in a path but not in a
+/// document, so a key holding one is only reachable quoted.
+#[test]
+fn get_reaches_a_key_that_needs_quoting() {
+    let doc = "com.example.owner \"platform-team\"\n\"log level\" \"debug\"\n";
+
+    assert_eq!(
+        run(&["get", "--raw", "\"com.example.owner\""], doc).stdout,
+        "platform-team\n"
+    );
+    assert_eq!(
+        run(&["get", "--raw", "\"log level\""], doc).stdout,
+        "debug\n"
+    );
+
+    // Unquoted, the same key reads as three nested ones — and the miss says what was there,
+    // spelled the way a path would have to spell it.
+    let out = run(&["get", "com.example.owner"], doc);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr.contains(r#""com.example.owner", "log level""#),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn get_needs_a_path() {
+    let out = run(&["get"], DOC);
+    assert_eq!(out.code, 2);
+    assert!(out.stderr.contains("needs a path"), "{}", out.stderr);
+}
+
 // --- JSON ---------------------------------------------------------------------------------
 
 #[test]
@@ -190,6 +287,26 @@ fn from_json_only_reformats() {
     let out = run(&["from", "json"], r#"{"a": 1, "b": [2, 3]}"#);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.stdout, "a 1\nb [\n  2\n  3\n]\n");
+}
+
+/// A document that does not parse is exit 1 wherever it is read — a converter must not
+/// report it as a bad command line.
+#[test]
+fn a_document_that_does_not_parse_is_exit_one_everywhere() {
+    for args in [
+        &["to", "json"][..],
+        &["to", "yaml"][..],
+        &["from", "json"][..],
+        &["get", "a"][..],
+    ] {
+        let out = run(args, "kind curly");
+        assert_eq!(out.code, 1, "{args:?}: {}", out.stderr);
+        assert!(
+            out.stderr.contains("string values must be quoted"),
+            "{args:?}: {}",
+            out.stderr
+        );
+    }
 }
 
 #[test]

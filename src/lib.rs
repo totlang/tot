@@ -22,6 +22,7 @@ mod fmt;
 mod lex;
 mod lint;
 mod parse;
+mod path;
 mod value;
 
 pub mod json;
@@ -30,4 +31,5 @@ pub use error::{Error, Span};
 pub use fmt::{format, format_value};
 pub use lint::{Warning, lint};
 pub use parse::parse;
+pub use path::Path;
 pub use value::{Float, Integer, Map, Value};

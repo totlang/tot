@@ -303,8 +303,9 @@ fn control_char_error(pos: usize, c: char) -> Error {
 }
 
 /// Consumes one escape sequence and appends its value. On entry `*pos` is at the backslash.
-/// Shared by both string forms so that escapes and their diagnostics stay identical.
-fn unescape_at(src: &str, pos: &mut usize, out: &mut String) -> Result<(), Error> {
+/// Shared by both string forms, and by path segments, so that escapes and their diagnostics
+/// stay identical everywhere a quoted string can appear.
+pub(crate) fn unescape_at(src: &str, pos: &mut usize, out: &mut String) -> Result<(), Error> {
     let esc_start = *pos;
     *pos += 1;
     let Some(c) = src[*pos..].chars().next() else {

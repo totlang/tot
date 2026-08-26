@@ -295,6 +295,7 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
 ```
 tot fmt [--check] [FILE]...       format in place, or stdin to stdout
 tot check [--strict] [FILE]...    parse and report errors
+tot get [--raw] <PATH> [FILE]     print the one value at PATH
 tot to <json|yaml|toml> [FILE]    write this document as another format
 tot from <json|yaml|toml> [FILE]  read another format and write tot
 ```
@@ -303,18 +304,48 @@ tot from <json|yaml|toml> [FILE]  read another format and write tot
 - `--check` on `fmt`: write nothing, exit 1 if any file would change.
 - `--strict` on `check`: also warn about the split-member shape above. Everything it reports
   is legal tot, so it is opt-in.
+- `--raw` on `get`: print a string with no quotes and no escapes. Other values are unaffected,
+  being unquoted already.
 - `--compact` on `to json`: one line instead of indented.
 - `--null=omit|error` on `to toml`, defaulting to `omit`.
-- Exit codes: `0` success, `1` a file is unformatted or a document failed to parse, `2` a file
-  could not be read or written or the command line was wrong. Every input is processed before
-  exiting, so one unparseable file in a directory does not hide the rest.
+- Exit codes: `0` success, `1` the input did not answer the request — a file is unformatted, a
+  document failed to parse, or a path was not found — `2` a file could not be read or written
+  or the command line was wrong. Every input is processed before exiting, so one unparseable
+  file in a directory does not hide the rest.
 - A flag that cannot apply to the chosen format is an error rather than a silent no-op:
   `tot to yaml --compact` is refused.
 - `from json` has no conversion step. Every JSON document is already valid tot, so it reads
   the input with the ordinary parser and reformats — the JSON direction needs no code at all,
   which is goal #2 paying for itself.
 
-Not built yet: `tot get <path>`.
+### Paths
+
+A path is not tot syntax, and is not part of the language. It is the CLI's way of naming one
+value, and it exists only because a shell needs one.
+
+```
+path    = step ( "." member | index )*
+step    = member | index
+member  = bare | STRING
+bare    = ( any character legal in a bare key, except "." )+
+index   = "[" [0-9]+ "]"
+```
+
+- `.` selects a member, `[n]` an element: `listen.port`, `routes[0].path`, `[2]` in a document
+  whose root is an array.
+- **A `.` nests here but not in a document**, where it is an ordinary bareword character. A key
+  holding one is written quoted, with the ordinary string escapes: `"com.example".level`. This
+  is the one place the two spellings of a key differ, and the reason a path is documented as
+  its own little language rather than as a list of keys.
+- A path the document does not have is exit 1, not 2: the command line was well formed, and
+  the document simply did not answer it. A path that is not a path is exit 2.
+- A miss names what was there, spelled the way a path spells it — a suggestion the reader
+  cannot type is worse than none.
+- Output is a tot document, so `tot get` composes with the rest of the CLI. A collection comes
+  back whole; `--raw` is for the case where a shell wants the contents of a string and not a
+  tot rendering of it.
+- No wildcards, slices, or filters. That is a query language, and the reason to reach for one
+  is a sign that the document should be converted to JSON and handed to `jq`.
 
 ### Implementation notes
 

@@ -62,14 +62,16 @@ package, or use `--workspace`.
 |---|---|
 | `tot fmt [--check] [FILE]...` | format in place; `--check` writes nothing and exits 1 on a diff |
 | `tot check [--strict] [FILE]...` | parse and report diagnostics |
+| `tot get [--raw] <PATH> [FILE]` | print the one value at PATH |
 | `tot to <json\|yaml\|toml> [FILE]` | write this document as another format |
 | `tot from <json\|yaml\|toml> [FILE]` | read another format and write tot |
 
 No FILE means stdin. Every input is processed before exiting — one bad file doesn't hide the
-rest. Exit codes: `0` ok, `1` unformatted or unparseable, `2` I/O or bad arguments.
+rest. Exit codes: `0` ok, `1` the input didn't answer the request (unformatted, unparseable, or
+no such path), `2` I/O or bad arguments.
 
-Flags: `--compact` (`to json`), `--null=omit|error` (`to toml`, default `omit`). A flag that
-doesn't apply to the chosen format is an error, not a no-op.
+Flags: `--raw` (`get`), `--compact` (`to json`), `--null=omit|error` (`to toml`, default
+`omit`). A flag that doesn't apply to the chosen format is an error, not a no-op.
 
 `check --strict` adds one lint: **a member's value must begin on its key's line.** A `{`, `[`,
 or `"""` may still run past it — only the start has to sit beside the key. Everything it
@@ -77,6 +79,19 @@ reports is legal tot, so it's opt-in. It exists because there's no separator bet
 a missing value shifts every member after it, and while quoted string values catch nearly all
 of those at the offending token, keeping members on one line is what makes the error land in
 the right place every time.
+
+`get` takes a path where `.` selects a member and `[n]` an element:
+
+```bash
+tot get listen.port config.tot
+```
+
+**A `.` nests in a path but not in a document**, where it's an ordinary bareword character — so
+a key holding one gets quoted: `tot get '"com.example".level'`. That's the only place the two
+spellings of a key differ. Output is tot, so it pipes back into `tot to json` and friends;
+`--raw` prints a string with no quotes or escapes, for `PORT=$(tot get --raw ...)`. A path the
+document doesn't have is exit 1 and names what was there instead. No wildcards or filters — if
+you want those, `tot to json | jq`.
 
 `from json` does no conversion. JSON is already tot, so it just reparses and reformats.
 
@@ -104,7 +119,12 @@ let text  = tot::format(src)?;                    // canonical tot, source -> so
 let text  = tot::format_value(&value);            // Value -> tot
 let json  = tot::json::to_string_pretty(&value);
 let warns = tot::lint(src)?;                      // -> Vec<Warning>, all legal-but-risky
+let at    = tot::Path::parse("a.b[0]")?.get(&value)?;
 ```
+
+`Path::parse` and `Path::get` are separate calls because their failures are different problems
+— a malformed path is your bug, a missing one is the document's answer. Spans on a path error
+index into the *path*, not the document.
 
 There is no JSON *parser* and there doesn't need to be — `parse` reads JSON directly.
 
@@ -126,6 +146,7 @@ src/                tot — library, zero dependencies
   cst.rs            lossless tree: comments, blank lines, inline/block choice
   fmt.rs            formatter (over the CST) + Value -> tot emitter
   lint.rs           opt-in checks (over the CST); nothing here is a language rule
+  path.rs           `a.b[0]` paths — a CLI convenience, not part of the language
   json.rs           JSON output only
   value.rs          Value, Integer, Float, Map
   error.rs          Span, Error, shared caret rendering
@@ -149,5 +170,4 @@ formatting preserves the parsed value, and formatting is idempotent.
 
 ## Not built yet
 
-- `tot get <path>`
 - serde `Serializer` / `Deserializer`
