@@ -73,8 +73,24 @@ impl Value {
         }
     }
 
+    /// The elements, if this is an array, for changing them in place.
+    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Value>> {
+        match self {
+            Value::Array(items) => Some(items),
+            _ => None,
+        }
+    }
+
     /// The members, if this is an object.
     pub fn as_object(&self) -> Option<&Map> {
+        match self {
+            Value::Object(map) => Some(map),
+            _ => None,
+        }
+    }
+
+    /// The members, if this is an object, for changing them in place.
+    pub fn as_object_mut(&mut self) -> Option<&mut Map> {
         match self {
             Value::Object(map) => Some(map),
             _ => None,
@@ -84,6 +100,20 @@ impl Value {
     /// Look up a member, if this is an object.
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.as_object()?.get(key)
+    }
+
+    /// Look up a member for replacement, if this is an object.
+    ///
+    /// Chains, so a nested member can be reached and rewritten:
+    ///
+    /// ```
+    /// let mut config = tot::parse("listen {port 8080}").unwrap();
+    /// *config.get_mut("listen").unwrap().get_mut("port").unwrap() =
+    ///     tot::Value::Integer(tot::Integer::from_i64(9090));
+    /// assert_eq!(tot::format_value(&config), "listen {\n  port 9090\n}\n");
+    /// ```
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+        self.as_object_mut()?.get_mut(key)
     }
 }
 
@@ -146,9 +176,11 @@ impl Integer {
         self.0.parse().ok()
     }
 
-    /// The value as an `f64`, which may lose precision.
+    /// The value as an `f64`, which may lose precision and saturates to an infinity for a
+    /// lexeme wider than a float can hold.
     pub fn as_f64(&self) -> f64 {
-        self.0.parse().unwrap_or(f64::NAN)
+        // Every construction path produces `-?[0-9]+`, which always parses.
+        self.0.parse().expect("an integer lexeme is always numeric")
     }
 }
 
@@ -203,9 +235,12 @@ impl Float {
         &self.0
     }
 
-    /// The value as an `f64`.
+    /// The value as an `f64`, which is always finite: the parser rejects a lexeme that
+    /// overflows one, and the constructors refuse a non-finite value.
     pub fn as_f64(&self) -> f64 {
-        self.0.parse().unwrap_or(f64::NAN)
+        self.0
+            .parse()
+            .expect("a float lexeme always denotes a finite float")
     }
 }
 
@@ -263,6 +298,29 @@ impl Map {
     /// The value for `key`, if present.
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.index.get(key).map(|&i| &self.entries[i].1)
+    }
+
+    /// The value for `key`, for changing it in place.
+    ///
+    /// This is how an existing member is rewritten: [`insert`](Map::insert) refuses a key that
+    /// is already here, because a duplicate is a parse error in the language and last-wins is
+    /// not a rule tot has.
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+        let i = *self.index.get(key)?;
+        Some(&mut self.entries[i].1)
+    }
+
+    /// Removes a member, returning its value. Later members keep their order.
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        let i = self.index.remove(key)?;
+        let (_, value) = self.entries.remove(i);
+        // Everything after the hole shifted down by one.
+        for slot in self.index.values_mut() {
+            if *slot > i {
+                *slot -= 1;
+            }
+        }
+        Some(value)
     }
 
     /// Members in insertion order.

@@ -61,10 +61,12 @@ impl fmt::Display for Warning {
 /// assert_eq!(tot::lint("timeout\n30").unwrap().len(), 1);
 /// ```
 pub fn lint(src: &str) -> Result<Vec<Warning>, Error> {
-    // Validate first, so the tree walk below can assume a well-formed document.
-    crate::parse(src)?;
+    // Validate first, so the tree walk below can assume a well-formed document. Both walks
+    // read the same tokens, so the source is lexed once.
+    let tokens = crate::lex::tokenize(src)?;
+    crate::parse::from_tokens(src, &tokens)?;
 
-    let document = cst::build(src)?;
+    let document = cst::from_tokens(src, &tokens)?;
     let mut warnings = Vec::new();
     match &document.body {
         Body::Members(items) => visit_items(items, &mut warnings),

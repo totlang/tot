@@ -28,6 +28,8 @@ FLAGS
     --compact       to json: one line instead of indented
     --null=omit     to toml: drop null members and elements, reporting each (default)
     --null=error    to toml: refuse to convert instead
+    --              end the flags; `-` is a bareword character, so a key, a path,
+                    or a file may itself start with `--`
 
 PATHS
     `.` selects a member and `[n]` an element: `listen.port`, `regions[0].name`.
@@ -267,7 +269,9 @@ fn to(args: &[String]) -> Result<ExitCode, String> {
     };
 
     print!("{out}");
-    if !out.ends_with('\n') {
+    // An empty document converts to empty text, and a lone newline is not a better rendering
+    // of it than nothing at all.
+    if !out.is_empty() && !out.ends_with('\n') {
         println!();
     }
     Ok(ExitCode::SUCCESS)
@@ -416,10 +420,24 @@ impl Format {
     }
 }
 
+/// Separates flags from positionals.
+///
+/// A bare `--` ends the flags: everything after it is positional, however it is spelled. That
+/// matters here more than in most tools, because `-` is an ordinary bareword character, so
+/// `--foo` is a legal key and a legal path — and a file may be named that way too.
 fn split(args: &[String]) -> (Vec<&str>, Vec<&str>) {
-    args.iter()
-        .map(String::as_str)
-        .partition(|arg| arg.starts_with("--"))
+    let mut flags = Vec::new();
+    let mut positional = Vec::new();
+    let mut rest = false;
+    for arg in args.iter().map(String::as_str) {
+        match arg {
+            _ if rest => positional.push(arg),
+            "--" => rest = true,
+            _ if arg.starts_with("--") => flags.push(arg),
+            _ => positional.push(arg),
+        }
+    }
+    (flags, positional)
 }
 
 fn target<'a>(positional: &[&'a str], command: &str) -> Result<(Format, Option<&'a str>), String> {

@@ -7,7 +7,7 @@
 //! needed.
 
 use crate::error::{Error, Span};
-use crate::lex::{Token, TokenKind, can_be_bare, tokenize};
+use crate::lex::{Token, TokenKind, can_be_bare};
 
 /// One line of the run-up to an item.
 #[derive(Debug)]
@@ -74,8 +74,10 @@ pub(crate) struct Document<'a> {
     pub tail: Vec<Lead<'a>>,
 }
 
-pub(crate) fn build(src: &str) -> Result<Document<'_>, Error> {
-    let tokens = tokenize(src)?;
+/// Builds the tree from an already-tokenized document. The caller has normally just validated
+/// the same tokens with [`parse`](crate::parse), and tokenizing again for this walk would be
+/// pure duplicate work — including re-unescaping every string.
+pub(crate) fn from_tokens<'a>(src: &'a str, tokens: &[Token]) -> Result<Document<'a>, Error> {
     Builder {
         src,
         tokens,
@@ -84,13 +86,13 @@ pub(crate) fn build(src: &str) -> Result<Document<'_>, Error> {
     .document()
 }
 
-struct Builder<'a> {
+struct Builder<'a, 't> {
     src: &'a str,
-    tokens: Vec<Token>,
+    tokens: &'t [Token],
     pos: usize,
 }
 
-impl<'a> Builder<'a> {
+impl<'a> Builder<'a, '_> {
     fn document(mut self) -> Result<Document<'a>, Error> {
         let (_, mut lead) = self.split_gap(false);
         trim_leading_blanks(&mut lead);

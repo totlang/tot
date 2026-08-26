@@ -102,9 +102,17 @@ produces `"hello\n  indented\nworld"`.
 
 1. Only whitespace may follow the opening `"""` on its line, and it is discarded. Content
    begins on the next line.
-2. The closing `"""` must be preceded on its line only by horizontal whitespace. That
-   whitespace is the **indentation prefix**. (Tokens may follow the closing delimiter — the
-   rule is about what comes before it, so no document-level structure is implied.)
+2. The closing `"""` **owns its whole line**: only horizontal whitespace may come before it,
+   and only horizontal whitespace may come after it. The whitespace before is the
+   **indentation prefix**.
+
+   Anchoring both ends is one rule instead of half of one, and it is the same shape the
+   emitter already assumes when it escapes a `"""` only where one opens a line. The cost is
+   that `a """…""" b 1` and `{a """…"""}` are no longer legal — a token may not follow the
+   delimiter on its line. That buys the diagnostic for the mistake people actually make: an
+   unescaped `"""` in the content would otherwise close the string early and report an error
+   somewhere further down that has nothing to do with it. The formatter never writes anything
+   after a closing delimiter, so no canonical document is affected.
 3. Every content line must begin with that prefix, or be entirely whitespace. The prefix is
    stripped from each line; whitespace-only lines become empty. A non-blank line that doesn't
    start with the prefix is an error. The prefix must match byte-for-byte, so mixing tabs and
@@ -152,6 +160,13 @@ way; `6e23` is a float here for the same reason it is in TOML and in Rust.
 
 Numbers keep their lexeme, so `1E-3` stays `1E-3` and an integer wider than `i64` — a `u64`
 snowflake id that arrived in a JSON file — is not clamped or quietly turned into a float.
+
+**An integer therefore has no range limit, but a float must denote a real `f64`.** `1e999` is
+a parse error, not an infinity: tot has no way to *write* an infinity, so a literal that means
+one has no value in the language. Accepting it would make a document that parses and formats
+but that no converter can write — and the failure would surface far from the literal, naming
+`inf` for a document that never says it. Underflow is not the same thing: `1e-999` is zero,
+which is a value tot has, and its lexeme survives like any other.
 
 > Note on the example above: `zip 123456` is an *integer*. Zip codes with a leading zero
 > (`01234`) are not valid tot numbers and must be written `"01234"` — which is what you
@@ -314,6 +329,11 @@ tot from <json|yaml|toml> [FILE]  read another format and write tot
   file in a directory does not hide the rest.
 - A flag that cannot apply to the chosen format is an error rather than a silent no-op:
   `tot to yaml --compact` is refused.
+- A bare `--` ends the flags. `-` is an ordinary bareword character, so `--foo` is a legal key
+  and a legal path, and a file may be named that way; without a terminator neither would be
+  reachable.
+- `tot fmt` pulls a value back onto its key's line, so it repairs exactly what
+  `check --strict` reports.
 - `from json` has no conversion step. Every JSON document is already valid tot, so it reads
   the input with the ordinary parser and reformats — the JSON direction needs no code at all,
   which is goal #2 paying for itself.

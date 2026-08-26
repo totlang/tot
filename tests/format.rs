@@ -205,6 +205,26 @@ fn a_thoroughly_ugly_document_comes_out_clean() {
     );
 }
 
+/// The formatter pulls a value back up onto its key's line — which is exactly the shape
+/// `check --strict` reports, so `tot fmt` repairs what the lint finds. That is worth pinning:
+/// it is a relationship between two features, and nothing else would catch it breaking.
+#[test]
+fn formatting_joins_a_member_back_onto_one_line() {
+    assert_eq!(f("timeout\n30\n"), "timeout 30\n");
+    assert_eq!(f("a\n1\nb\n2\n"), "a 1\nb 2\n");
+    assert_eq!(f("listen\n{port 8080}\n"), "listen {port 8080}\n");
+    // A comment between the two has no home on that line, so it moves above the member.
+    assert_eq!(f("a # why\n1\n"), "# why\na 1\n");
+
+    for src in ["timeout\n30\n", "a\n1\nb\n2\n", "a # why\n1\n"] {
+        let formatted = f(src);
+        assert!(
+            tot::lint(&formatted).unwrap().is_empty(),
+            "`{src}` should be clean after formatting, got `{formatted}`"
+        );
+    }
+}
+
 // --- format_value: emitting a Value with no source to preserve -----------------------------
 
 /// `format_value(&{k: s})`, for testing how one string is written.

@@ -10,7 +10,11 @@ const MAX_DEPTH: usize = 128;
 /// The top level is an object body with the braces left off, unless the entire input is a
 /// single value — which is what lets JSON documents with a scalar or array root parse.
 pub fn parse(src: &str) -> Result<Value, Error> {
-    let tokens = tokenize(src)?;
+    from_tokens(src, &tokenize(src)?)
+}
+
+/// Parses an already-tokenized document, for callers that walk the same tokens twice.
+pub(crate) fn from_tokens(src: &str, tokens: &[Token]) -> Result<Value, Error> {
     Parser {
         src,
         tokens,
@@ -20,14 +24,14 @@ pub fn parse(src: &str) -> Result<Value, Error> {
     .document()
 }
 
-struct Parser<'a> {
+struct Parser<'a, 't> {
     src: &'a str,
-    tokens: Vec<Token>,
+    tokens: &'t [Token],
     pos: usize,
     depth: usize,
 }
 
-impl<'a> Parser<'a> {
+impl<'a> Parser<'a, '_> {
     fn document(&mut self) -> Result<Value, Error> {
         if self.tokens.is_empty() {
             return Ok(Value::Object(Map::new()));
@@ -56,6 +60,11 @@ impl<'a> Parser<'a> {
                 TokenKind::Str(s) => Ok(Value::String(s.clone())),
                 TokenKind::Bareword => match literal(self.text(span)) {
                     Some(value) => Ok(value),
+                    // A number-shaped lexeme that produced no value is out of range, not a
+                    // key whose value was forgotten.
+                    None if number_lexeme(self.text(span)).is_some() => {
+                        Err(bad_value(span, self.text(span)))
+                    }
                     None => Err(missing_value(span, self.text(span))),
                 },
                 kind => Err(Error::new(span, format!("unexpected {}", kind.describe()))),
@@ -198,6 +207,13 @@ fn missing_value(span: Span, key: &str) -> Error {
 }
 
 fn bad_value(span: Span, text: &str) -> Error {
+    // Grammatically a number, so the only way it reached here is by being out of range.
+    if matches!(number_lexeme(text), Some(Value::Float(_))) {
+        return Error::new(span, format!("`{text}` is outside the range of a float")).with_help(
+            "tot has no infinity, so it has no way to write this; the largest finite \
+                 value is about 1.8e308",
+        );
+    }
     if text.starts_with(|c: char| c.is_ascii_digit() || matches!(c, '-' | '+' | '.')) {
         Error::new(span, format!("`{text}` is not a valid number")).with_help(format!(
             "tot uses the JSON number grammar: no leading zeros, no leading `+`, no hex, no \
@@ -218,7 +234,23 @@ fn literal(text: &str) -> Option<Value> {
     }
 }
 
-/// Validates and classifies a number lexeme.
+/// Validates and classifies a number lexeme, rejecting a float no `f64` can hold.
+///
+/// An integer keeps its lexeme and so has no range limit, but a float has to denote a real
+/// `f64` — tot has no way to write an infinity, so a lexeme that means one has no value in
+/// the language. Letting `1e999` through would produce a document that parses and formats but
+/// that no converter can write.
+fn number(text: &str) -> Option<Value> {
+    let value = number_lexeme(text)?;
+    if let Value::Float(f) = &value
+        && !f.as_str().parse::<f64>().is_ok_and(f64::is_finite)
+    {
+        return None;
+    }
+    Some(value)
+}
+
+/// The grammar alone, with no range check.
 ///
 /// ```text
 /// number = "-"? ( digits ("." [0-9]*)? | "." [0-9]+ ) ([eE] [+-]? [0-9]+)?
@@ -228,7 +260,7 @@ fn literal(text: &str) -> Option<Value> {
 /// A superset of the JSON grammar: `1.` and `.1` are also accepted. Leading zeros stay a
 /// parse error so that `01234` has to be a string. The result is a [`Value::Float`] if there
 /// was a `.` or an exponent and a [`Value::Integer`] otherwise.
-fn number(text: &str) -> Option<Value> {
+fn number_lexeme(text: &str) -> Option<Value> {
     let b = text.as_bytes();
     let mut i = 0;
     let mut is_float = false;

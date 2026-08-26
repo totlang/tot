@@ -231,6 +231,26 @@ impl<'de> de::Deserializer<'de> for Key<'de> {
         visitor.visit_borrowed_str(self.key)
     }
 
+    /// A key is never absent — it would not be a member otherwise.
+    fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        visitor.visit_some(self)
+    }
+
+    /// A unit-only enum is a perfectly good key type, and the serializer writes one as its
+    /// variant name. Reading it back means offering the name as a variant rather than as the
+    /// plain string an enum's visitor will not accept.
+    fn deserialize_enum<V: Visitor<'de>>(
+        self,
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Error> {
+        visitor.visit_enum(Variant {
+            name: self.key,
+            payload: None,
+        })
+    }
+
     key_as! {
         deserialize_i8 -> visit_i8 as i8,
         deserialize_i16 -> visit_i16 as i16,
@@ -248,8 +268,8 @@ impl<'de> de::Deserializer<'de> for Key<'de> {
     // Floats are left out on purpose: the serializer refuses a float key, because a lexeme
     // like `1.0` is a poor name, so nothing round-trips through one.
     forward_to_deserialize_any! {
-        f32 f64 char str string bytes byte_buf option unit unit_struct newtype_struct seq
-        tuple tuple_struct map struct enum identifier ignored_any
+        f32 f64 char str string bytes byte_buf unit unit_struct newtype_struct seq
+        tuple tuple_struct map struct identifier ignored_any
     }
 }
 

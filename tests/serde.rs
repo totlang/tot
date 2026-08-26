@@ -209,6 +209,22 @@ fn maps_with_non_string_keys_get_string_keys() {
     assert_eq!(round_trip(&map), map);
 }
 
+/// A unit-only enum is a perfectly reasonable key type, and it has to survive both ways —
+/// serializing it and then failing to read it back is worse than refusing it outright.
+#[test]
+fn enum_map_keys_round_trip() {
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    enum Scheme {
+        Http,
+        Https,
+    }
+
+    let map = BTreeMap::from([(Scheme::Http, 80u16), (Scheme::Https, 443)]);
+    assert_eq!(tot::to_string(&map).unwrap(), "http 80\nhttps 443\n");
+    assert_eq!(round_trip(&map), map);
+}
+
 #[test]
 fn bytes_are_an_array_of_integers() {
     #[derive(Debug, PartialEq, Serialize, Deserialize)]

@@ -35,6 +35,9 @@ it. [examples/config.tot](examples/config.tot) tours the syntax.
   `1 != 1.0` and `6e23` is a float. `1.` and `.1` are legal here and normalize to `1.0` and
   `0.1` on the way out to JSON.
 - **No leading zeros.** `01234` is an error — zip codes have to be strings.
+- **Integers have no range limit; floats do.** An integer keeps its lexeme, so a 400-digit one
+  survives. A float has to denote a real `f64`, so `1e999` is a parse error — tot has no way
+  to write an infinity. (`1e-999` is fine; it's zero.)
 - **Duplicate keys are an error.** No last-wins.
 - **No dates, anchors, tags, includes, or interpolation.** Not planned.
 
@@ -48,6 +51,10 @@ motd """
 
 Indentation is stripped relative to the **closing** delimiter, so reindenting the block around
 a string cannot change its value. No trailing newline unless you write `\n`.
+
+The closing `"""` **owns its whole line** — nothing may follow it. Write `\"""` for a literal
+`"""` opening a content line; otherwise it would close the string early and the error would
+land somewhere further down.
 
 ## CLI
 
@@ -71,14 +78,17 @@ rest. Exit codes: `0` ok, `1` the input didn't answer the request (unformatted, 
 no such path), `2` I/O or bad arguments.
 
 Flags: `--raw` (`get`), `--compact` (`to json`), `--null=omit|error` (`to toml`, default
-`omit`). A flag that doesn't apply to the chosen format is an error, not a no-op.
+`omit`). A flag that doesn't apply to the chosen format is an error, not a no-op. A bare `--`
+ends the flags — `-` is a bareword character, so `--foo` is a legal key and a legal path, and
+a file can be named that way: `tot get -- --foo config.tot`.
 
 `check --strict` adds one lint: **a member's value must begin on its key's line.** A `{`, `[`,
 or `"""` may still run past it — only the start has to sit beside the key. Everything it
 reports is legal tot, so it's opt-in. It exists because there's no separator between members:
 a missing value shifts every member after it, and while quoted string values catch nearly all
 of those at the offending token, keeping members on one line is what makes the error land in
-the right place every time.
+the right place every time. **`tot fmt` fixes what it reports** — the formatter pulls the
+value back up onto the key's line.
 
 `get` takes a path where `.` selects a member and `[n]` an element:
 
@@ -129,6 +139,17 @@ index into the *path*, not the document.
 There is no JSON *parser* and there doesn't need to be — `parse` reads JSON directly.
 
 Errors carry a span: `e.render(src)` gives a caret diagnostic.
+
+To edit a parsed document, `Value::get_mut` chains and `Map` has `get_mut` / `remove`:
+
+```rust
+let mut config = tot::parse(src)?;
+*config.get_mut("listen").unwrap().get_mut("port").unwrap() = Value::Integer(Integer::from_i64(9090));
+config.as_object_mut().unwrap().remove("stale");
+```
+
+`Map::insert` **refuses** a key that's already there and returns `false` — duplicates are a
+parse error in the language, and last-wins isn't a rule tot has. Use `get_mut` to replace.
 
 Numbers keep their original lexeme, so integers wider than `i64` survive a round trip.
 `Integer` equality is value equality, but **`Float` equality is lexical** — `1.0 != 1.00`.

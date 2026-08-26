@@ -2,9 +2,44 @@
 //! exit code.
 
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const EXE: &str = env!("CARGO_BIN_EXE_tot");
+
+/// A directory of this test's own, removed when the test ends.
+///
+/// The name carries the process id and a counter, so two runs at once — a watch process
+/// alongside a manual one, or two CI jobs sharing a temp dir — cannot collide, and nothing
+/// is left behind to be read by the next run.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(name: &str) -> Self {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("tot-cli-{name}-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        TempDir(dir)
+    }
+
+    fn file(&self, name: &str) -> PathBuf {
+        self.0.join(name)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A path as the CLI wants it. Tests pass real files, so this must not fail.
+fn arg(path: &Path) -> &str {
+    path.to_str().expect("temp paths are UTF-8")
+}
 
 const DOC: &str = "\
 name \"svc\"
@@ -25,7 +60,17 @@ struct Output {
 }
 
 fn run(args: &[&str], stdin: &str) -> Output {
-    let mut child = Command::new(EXE)
+    run_in(None, args, stdin)
+}
+
+/// Runs the binary, optionally from a given working directory — which is the only way to give
+/// it a relative path, and so the only way to test one that starts with `--`.
+fn run_in(dir: Option<&Path>, args: &[&str], stdin: &str) -> Output {
+    let mut command = Command::new(EXE);
+    if let Some(dir) = dir {
+        command.current_dir(dir);
+    }
+    let mut child = command
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -87,26 +132,17 @@ fn fmt_reports_an_unparseable_document_as_exit_one() {
 /// One bad file must not leave the rest of a directory unformatted and unreported.
 #[test]
 fn fmt_processes_every_file_even_when_one_fails() {
-    let dir = std::env::temp_dir().join("tot-cli-fmt-continues");
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let dir = TempDir::new("fmt-continues");
     let (first, bad, last) = (
-        dir.join("first.tot"),
-        dir.join("bad.tot"),
-        dir.join("last.tot"),
+        dir.file("first.tot"),
+        dir.file("bad.tot"),
+        dir.file("last.tot"),
     );
     std::fs::write(&first, "a:1").expect("write");
     std::fs::write(&bad, "kind curly").expect("write");
     std::fs::write(&last, "b:2").expect("write");
 
-    let out = run(
-        &[
-            "fmt",
-            first.to_str().unwrap(),
-            bad.to_str().unwrap(),
-            last.to_str().unwrap(),
-        ],
-        "",
-    );
+    let out = run(&["fmt", arg(&first), arg(&bad), arg(&last)], "");
 
     assert_eq!(out.code, 1, "{}", out.stderr);
     assert!(
@@ -120,12 +156,11 @@ fn fmt_processes_every_file_even_when_one_fails() {
 
 #[test]
 fn formatting_a_file_in_place_succeeds() {
-    let dir = std::env::temp_dir().join("tot-cli-fmt-in-place");
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let path = dir.join("one.tot");
+    let dir = TempDir::new("fmt-in-place");
+    let path = dir.file("one.tot");
     std::fs::write(&path, "a:1").expect("write");
 
-    let out = run(&["fmt", path.to_str().unwrap()], "");
+    let out = run(&["fmt", arg(&path)], "");
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(std::fs::read_to_string(&path).expect("read"), "a 1\n");
 }
@@ -200,14 +235,40 @@ fn get_raw_drops_the_quotes_on_a_string() {
 
 #[test]
 fn get_reads_a_file_as_well_as_stdin() {
-    let dir = std::env::temp_dir().join("tot-cli-get");
-    std::fs::create_dir_all(&dir).expect("create temp dir");
-    let path = dir.join("config.tot");
+    let dir = TempDir::new("get");
+    let path = dir.file("config.tot");
     std::fs::write(&path, DOC).expect("write");
 
-    let out = run(&["get", "--raw", "name", path.to_str().unwrap()], "");
+    let out = run(&["get", "--raw", "name", arg(&path)], "");
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.stdout, "svc\n");
+}
+
+/// `-` is a bareword character, so a key, a path, and a file may all begin with `--`. A bare
+/// `--` is what makes them reachable.
+#[test]
+fn a_bare_double_dash_ends_the_flags() {
+    let doc = "--foo 1\n";
+    assert_eq!(run(&["get", "--", "--foo"], doc).stdout, "1\n");
+    // Without it, the path is read as a flag.
+    let out = run(&["get", "--foo"], doc);
+    assert_eq!(out.code, 2);
+    assert!(out.stderr.contains("unknown flag"), "{}", out.stderr);
+
+    // Flags before the `--` still apply.
+    assert_eq!(
+        run(&["get", "--raw", "--", "--foo"], "--foo \"x\"\n").stdout,
+        "x\n"
+    );
+
+    // And a file whose own name starts with `--`, which needs a relative path to reproduce.
+    let dir = TempDir::new("double-dash");
+    let path = dir.file("--odd.tot");
+    std::fs::write(&path, "a:1").expect("write");
+
+    let out = run_in(Some(&dir.0), &["fmt", "--", "--odd.tot"], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "a 1\n");
 }
 
 /// A path the document does not have is exit 1: the command line was fine, the document just

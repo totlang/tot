@@ -191,6 +191,79 @@ fn multiline_errors() {
     assert!(err("a \"\"\"\n  x\ny\n  \"\"\"").contains("not indented to match"));
 }
 
+/// The closing delimiter owns its whole line. Without that rule an unescaped `"""` in the
+/// content closes the string early and the error lands on some later line instead.
+#[test]
+fn a_closing_delimiter_ends_its_line() {
+    let src = "motd \"\"\"\n  hello\n  \"\"\" oops\n  \"\"\"\n";
+    let e = parse(src).expect_err("should not parse");
+    assert!(e.message.contains("content after the closing"), "{e}");
+    assert_eq!(e.line_col(src), (3, 6));
+
+    // Escaping the quote keeps the line as content, which is the fix the help suggests.
+    let ok = parse("motd \"\"\"\n  hello\n  \\\"\"\" oops\n  \"\"\"\n").unwrap();
+    assert_eq!(ok.get("motd").unwrap().as_str(), Some("hello\n\"\"\" oops"));
+}
+
+// --- editing a parsed document --------------------------------------------------------------
+
+/// Read, change one thing, write it back — the reason a `Value` needs to be mutable at all.
+#[test]
+fn a_parsed_document_can_be_edited() {
+    let mut value = parse("name \"svc\"\nlisten {host \"::\" port 8080}\nstale true").unwrap();
+
+    // Replace an existing member, which `insert` deliberately refuses to do.
+    *value.get_mut("listen").unwrap().get_mut("port").unwrap() =
+        Value::Integer(tot::Integer::from_i64(9090));
+    assert!(
+        !value
+            .as_object_mut()
+            .unwrap()
+            .insert("name".to_string(), Value::Null)
+    );
+
+    // Add one, and drop one.
+    assert!(
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("added".to_string(), Value::Bool(true))
+    );
+    assert_eq!(
+        value.as_object_mut().unwrap().remove("stale"),
+        Some(Value::Bool(true))
+    );
+    assert_eq!(value.as_object_mut().unwrap().remove("stale"), None);
+
+    assert_eq!(
+        j(&tot::format_value(&value)),
+        r#"{"name":"svc","listen":{"host":"::","port":9090},"added":true}"#
+    );
+}
+
+/// Removing a member has to leave the index agreeing with the order, or a later lookup
+/// silently returns the wrong value.
+#[test]
+fn removing_a_member_keeps_the_rest_addressable() {
+    let mut value = parse("a 1 b 2 c 3 d 4").unwrap();
+    let map = value.as_object_mut().unwrap();
+
+    map.remove("a");
+    map.remove("c");
+
+    assert_eq!(map.len(), 2);
+    assert_eq!(map.keys().collect::<Vec<_>>(), ["b", "d"]);
+    for (key, want) in [("b", "2"), ("d", "4")] {
+        let found = map.get(key).and_then(Value::as_integer).map(|i| i.as_str());
+        assert_eq!(found, Some(want), "`{key}` after removals");
+    }
+    assert!(map.get("a").is_none() && map.get("c").is_none());
+
+    // The index has to accept the names back, too.
+    assert!(map.insert("a".to_string(), Value::Null));
+    assert_eq!(map.keys().collect::<Vec<_>>(), ["b", "d", "a"]);
+}
+
 // --- numbers ------------------------------------------------------------------------------
 
 #[test]
@@ -210,6 +283,30 @@ fn integers_and_floats_are_distinct() {
     // An exponent makes a float too — `1e-5` could not be an integer.
     assert!(matches!(value.get("e"), Some(Value::Float(_))));
     assert!(matches!(value.get("n"), Some(Value::Float(_))));
+}
+
+/// An integer keeps its lexeme and so has no range limit, but a float has to denote a real
+/// `f64`. tot cannot write an infinity, so a lexeme that means one has no value here — and
+/// letting it through would make a document that parses but that no converter can write.
+#[test]
+fn a_float_that_no_f64_can_hold_is_rejected() {
+    for src in ["a 1e999", "a -1e999", "a 1.5e400"] {
+        assert!(err(src).contains("outside the range of a float"), "{src}");
+    }
+    // As the whole document, too, where a lone bareword is otherwise read as a missing value.
+    assert!(err("1e999").contains("outside the range of a float"));
+
+    // Underflow is a real value — it is zero, and the lexeme still survives.
+    let value = parse("a 1e-999").unwrap();
+    assert_eq!(value.get("a").unwrap().as_f64(), Some(0.0));
+    assert_eq!(
+        value.get("a").unwrap().as_float().unwrap().as_str(),
+        "1e-999"
+    );
+
+    // The largest finite float is fine; an integer of any width still is too.
+    assert!(parse("a 1.7976931348623157e308").is_ok());
+    assert!(parse(&format!("a {}", "9".repeat(400))).is_ok());
 }
 
 /// `1.` and `.1` are tot-only forms: legal here, not legal JSON, normalized on the way out.

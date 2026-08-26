@@ -314,10 +314,13 @@ pub struct SerializeObject {
 impl SerializeObject {
     fn insert<T: Serialize + ?Sized>(&mut self, key: String, value: &T) -> Result<(), Error> {
         let value = value.serialize(Serializer).map_err(|e| e.at_key(&key))?;
-        // The language has no last-wins rule, so neither does this.
-        if !self.map.insert(key.clone(), value) {
+        // The language has no last-wins rule, so neither does this. Checked before the move
+        // rather than after, so the common path does not clone the key for an error that
+        // almost never happens.
+        if self.map.contains_key(&key) {
             return Err(Error::new(format!("duplicate key `{key}`")));
         }
+        self.map.insert(key, value);
         Ok(())
     }
 

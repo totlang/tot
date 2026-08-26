@@ -229,7 +229,23 @@ impl<'a> Lexer<'a> {
             let line = &src[line_start..text_end];
             let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
             if line[indent..].starts_with("\"\"\"") {
-                break (&line[..indent], line_start + indent + 3);
+                // The delimiter owns its whole line, at both ends. Anything after it is
+                // almost always an unescaped `"""` inside the content; treating it as the
+                // next token instead would close the string here and land the error on some
+                // later line that has nothing to do with the mistake.
+                let after = line_start + indent + 3;
+                let rest = &src[after..text_end];
+                if !rest.chars().all(|c| c == ' ' || c == '\t') {
+                    return Err(Error::new(
+                        Span::new(after, text_end),
+                        "content after the closing `\"\"\"`",
+                    )
+                    .with_help(
+                        "the closing delimiter ends its line; write `\\\"\"\"` for a literal \
+                         `\"\"\"` at the start of a content line",
+                    ));
+                }
+                break (&line[..indent], after);
             }
             let Some(e) = newline else {
                 return Err(unterminated_block(start));
