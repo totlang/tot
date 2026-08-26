@@ -71,7 +71,7 @@ package, or use `--workspace`.
 | | |
 |---|---|
 | `tot fmt [--check] [FILE]...` | format in place; `--check` writes nothing and exits 1 on a diff |
-| `tot check [--strict] [FILE]...` | parse and report diagnostics |
+| `tot check [--strict] [--schema=F] [FILE]...` | parse and report diagnostics |
 | `tot merge [FILE]...` | fold documents together, left to right |
 | `tot get [--raw] <PATH> [FILE]` | print the one value at PATH |
 | `tot set <PATH> <VALUE> [FILE]` | write VALUE at PATH and print the document |
@@ -95,7 +95,33 @@ reports is legal tot, so it's opt-in. It exists because there's no separator bet
 a missing value shifts every member after it, and while quoted string values catch nearly all
 of those at the offending token, keeping members on one line is what makes the error land in
 the right place every time. **`tot fmt` fixes what it reports** — the formatter pulls the
-value back up onto the key's line.
+value back up onto the key's line. `--strict` and `--schema=` are separate questions and
+compose; a document can fail both at once.
+
+`check --schema=` validates a document's shape. **A schema is a tot document that looks like
+the documents it describes**, with a type where each value would be:
+
+```tot
+name    "string"
+listen  {host "string" port "int" tls? "bool"}
+regions ["string"]
+labels  {* "string"}
+retries "int|null"
+```
+
+Types are `any`, `string`, `int`, `float`, `bool`, `null`, joined with `|`. **`?` on a key**
+makes the member optional — it goes on the key because presence is a property of the member,
+which also means it works for a `{…}` or `[…]` value. **`*` as a key** covers every other key;
+without one an undeclared member is an error, since catching a typo is most of the point.
+
+Type names are quoted because a schema is tot, and a bare word is never a value in tot. That's
+also what makes a schema line up with the config beside it. [examples/config.schema.tot](examples/config.schema.tot)
+describes [examples/config.tot](examples/config.tot).
+
+Every violation is reported, not just the first, and each one names a `tot get` path and points
+a caret at the key. A typo gives you two — the name that's missing and the name that isn't
+known — because either alone sends you to the wrong place. No enumerations yet; the spec says
+why.
 
 `merge` is base-plus-overlays:
 
@@ -173,6 +199,7 @@ let text  = tot::format_value(&value);            // Value -> tot
 let folded = tot::merge(documents, tot::Nulls::Set);   // or merge_into(&mut base, overlay, …)
 let json  = tot::json::to_string_pretty(&value);
 let warns = tot::lint(src)?;                      // -> Vec<Warning>, all legal-but-risky
+let bad   = tot::Schema::parse(shape)?.check(src)?;    // -> Vec<Violation>
 let at    = tot::Path::parse("a.b[0]")?.get(&value)?;
 let v     = tot::parse_value(arg)?;               // text in a value position, not a file
 ```
@@ -252,6 +279,7 @@ src/                tot — library, zero dependencies
   lint.rs           opt-in checks (over the CST); nothing here is a language rule
   merge.rs          folding documents together, left to right
   path.rs           `a.b[0]` paths — a CLI convenience, not part of the language
+  schema.rs         checking a document's shape against a schema written in tot
   json.rs           JSON output only
   serde/            optional; ser.rs and de.rs, both via Value
   value.rs          Value, Integer, Float, Map
@@ -279,10 +307,11 @@ formatting preserves the parsed value, and formatting is idempotent.
 
 ## Next
 
-`tot merge` and `tot set` are built. Still open, in rough order:
+`tot merge`, `tot set`, and schema validation are built. Still open, in rough order:
 
-- **Schema validation** (`tot check --schema schema.tot`, schema written in tot). Ranked ahead
-  of any templating: a document that builds and is wrong is the failure that actually gets hit.
+- **Enumerations in schemas.** The most obvious missing check, with no good spelling yet —
+  `["debug" "info"]` already means an array of one element type, so it can't also mean a choice
+  between two literals. [The spec](SPEC.md#ranked-ahead-of-all-of-it) has the details.
 - **In-place editing that keeps comments.** `set` and `merge` fold values, so they can't write
   back over a hand-written config without losing its comments. Doing that properly means
   splicing text through the CST, which is a different and larger feature.

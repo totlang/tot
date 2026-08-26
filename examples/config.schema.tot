@@ -1,0 +1,44 @@
+# The shape of config.tot. A schema is a tot document that looks like the documents it
+# describes: the same keys, in the same order, with a type where each value would be.
+#
+#   tot check --schema=examples/config.schema.tot examples/config.tot
+
+name "string"
+version "int"
+enabled "bool"
+
+# A key that needs quoting in the document needs it here too — a schema is just tot.
+"log level" "string"
+timeout "int"
+sample-rate "float"
+
+# `int|null` because the document says `retries null`, and null is a value, not an absence.
+retries "int|null"
+
+# And a dot is still an ordinary bareword character, so this is one key here as well.
+com.example.owner "string"
+
+replicas {
+  min "int"
+  max "int"
+}
+
+listen {
+  host "string"
+  port "int"
+  tls {enabled "bool"}
+}
+
+regions ["string"]
+
+# An array of objects: the element type is described once, and every element is checked.
+routes [
+  {
+    path "string"
+    methods ["string"]
+    # `?` on the key, so a route may leave this out.
+    public? "bool"
+  }
+]
+
+motd "string"

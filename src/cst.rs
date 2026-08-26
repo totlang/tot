@@ -38,8 +38,12 @@ pub(crate) struct Collection<'a> {
 /// A member's key, carrying what the formatter and the lints each need.
 #[derive(Debug)]
 pub(crate) struct Key {
-    /// The key as it should be written: unquoted where that is legal.
+    /// The key as it should be written: unquoted where that is legal, and otherwise the
+    /// author's own quoting, escapes and all.
     pub text: String,
+    /// The key itself, unescaped. This is the string the document actually has, which is what
+    /// a path is built from; `text` is a spelling of it.
+    pub name: String,
     /// Where the key sits in the source, for diagnostics.
     pub span: Span,
     /// Whether a newline separates the key from the first token of its value.
@@ -197,9 +201,9 @@ impl<'a> Builder<'a, '_> {
             let token = self.tokens.get(self.pos).ok_or_else(internal)?;
             let span = token.span;
             let raw = &self.src[span.start..span.end];
-            let text = match &token.kind {
-                TokenKind::Str(cooked) => render_key(raw, cooked),
-                TokenKind::Bareword => raw.to_string(),
+            let (text, name) = match &token.kind {
+                TokenKind::Str(cooked) => (render_key(raw, cooked), cooked.clone()),
+                TokenKind::Bareword => (raw.to_string(), raw.to_string()),
                 _ => return Err(internal()),
             };
             self.pos += 1;
@@ -219,6 +223,7 @@ impl<'a> Builder<'a, '_> {
 
             Some(Key {
                 text,
+                name,
                 span,
                 split_from_value,
             })

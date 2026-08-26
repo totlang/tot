@@ -208,6 +208,93 @@ fn check_strict_flags_members_split_across_lines() {
     );
 }
 
+#[test]
+fn check_schema_reports_shape_problems() {
+    let dir = TempDir::new("schema");
+    let schema = dir.file("shape.tot");
+    std::fs::write(
+        &schema,
+        "name \"string\"\nlisten {port \"int\" tls? \"bool\"}\n",
+    )
+    .expect("write");
+    let flag = format!("--schema={}", arg(&schema));
+
+    let good = "name \"svc\"\nlisten {port 8080}\n";
+    assert_eq!(run(&["check", &flag], good).code, 0);
+
+    let out = run(&["check", &flag], "name \"svc\"\nlisten {prot 8080}\n");
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr.contains("missing member `port`"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("unknown member `prot`"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("the schema has port, tls"),
+        "{}",
+        out.stderr
+    );
+    // The offending key gets a caret, like every other diagnostic.
+    assert!(out.stderr.contains("^^^^"), "{}", out.stderr);
+}
+
+/// A schema that is not a schema is a bad command line, not a bad document.
+#[test]
+fn check_rejects_a_bad_schema_before_reading_anything() {
+    let dir = TempDir::new("schema-bad");
+    let schema = dir.file("shape.tot");
+    std::fs::write(&schema, "port \"intt\"\n").expect("write");
+
+    let out = run(
+        &["check", &format!("--schema={}", arg(&schema))],
+        "port 1\n",
+    );
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr.contains("`intt` is not a type"),
+        "{}",
+        out.stderr
+    );
+
+    // And the flag needs its file attached, since a bare one would look like an input.
+    let out = run(&["check", "--schema", "shape.tot"], "a 1\n");
+    assert_eq!(out.code, 2);
+    assert!(out.stderr.contains("with an `=`"), "{}", out.stderr);
+}
+
+/// The schema and the lint are separate questions, and a document can fail both at once.
+#[test]
+fn check_schema_and_strict_compose() {
+    let dir = TempDir::new("schema-strict");
+    let schema = dir.file("shape.tot");
+    std::fs::write(&schema, "timeout \"string\"\n").expect("write");
+    let flag = format!("--schema={}", arg(&schema));
+
+    let out = run(&["check", "--strict", &flag], "timeout\n30\n");
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("expected string"), "{}", out.stderr);
+    assert!(out.stderr.contains("warning: "), "{}", out.stderr);
+}
+
+/// The example is the document that exercises every feature, so the schema beside it has to
+/// describe all of them.
+#[test]
+fn the_example_config_matches_its_schema() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the workspace root");
+    let flag = format!("--schema={}", arg(&root.join("examples/config.schema.tot")));
+    let config = root.join("examples/config.tot");
+
+    let out = run(&["check", "--strict", &flag, arg(&config)], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+}
+
 // --- merge --------------------------------------------------------------------------------
 
 #[test]

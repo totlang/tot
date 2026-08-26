@@ -311,7 +311,8 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
 
 ```
 tot fmt [--check] [FILE]...       format in place, or stdin to stdout
-tot check [--strict] [FILE]...    parse and report errors
+tot check [--strict] [--schema=FILE] [FILE]...
+                                  parse and report errors
 tot merge [--null=…] [FILE]...    fold documents together, left to right
 tot get [--raw] <PATH> [FILE]     print the one value at PATH
 tot set <PATH> <VALUE> [FILE]     write VALUE at PATH
@@ -339,6 +340,46 @@ tot from <json|yaml|toml> [FILE]  read another format and write tot
   reachable.
 - `tot fmt` pulls a value back onto its key's line, so it repairs exactly what
   `check --strict` reports.
+
+### Schemas
+
+**A schema is a tot document shaped like the ones it describes**, with a type where each value
+would be. A schema you have to decode is worse than none, and a shape you can read beside the
+config it governs is one that stays current.
+
+```tot
+name    "string"
+version "int"
+listen {
+  host  "string"
+  port  "int"
+  tls?  "bool"
+}
+regions ["string"]
+labels  {* "string"}
+retries "int|null"
+```
+
+- A type name is **quoted**, because a schema is tot and in tot a bare word is never a value.
+  That rule does not get an exception here — and the quotes are what make a schema line up
+  with the document beside it, the same keys in the same shape with the values replaced.
+- The types are `any`, `string`, `int`, `float`, `bool`, and `null`, joined with `|`. The
+  integer/float split is the language's, so `1` does not satisfy `"float"`.
+- `{…}` describes an object and `[T]` an array, whose every element must match `T`. An array
+  schema needs exactly one element, since it describes a type and not a length.
+- **`?` on a key** makes the member optional. It goes on the key rather than the type because
+  presence is a property of the member, not of the value — which also means it works for a
+  `{…}` or `[…]` member, where there is no bareword to hang it on.
+- **`*` as a key** covers every key the schema does not name. Without one, an undeclared
+  member is an error: catching a typo is most of what checking a shape is for. `{* "any"}` is
+  how a schema says it does not mind.
+- A schema therefore cannot describe a member literally named `*`, or one ending in `?`. Both
+  are documented limits rather than escapes, on the grounds that neither appears in practice.
+- Every violation is reported, not just the first. A typo produces two — the name that is
+  missing and the name that is not known — because either alone sends you to the wrong place.
+- A violation's location is a **path**, spelled the way `tot get` spells one. Where the
+  document has a key to point at, the caret goes there; a member that is missing is reported
+  against the object that wanted it, and one missing at the root has nothing to point at.
 
 ### Merge
 
@@ -557,9 +598,13 @@ syntax made to do both is where these designs usually go muddy.
 
 **Validation is worth more than templating.** A document that builds successfully and is
 wrong is the failure that actually gets hit, and generating documents makes it more likely,
-not less. `tot check --schema schema.tot`, with the schema itself written in tot, needs no
-language change at all and pays off immediately at the sizes that motivate composition in the
-first place.
+not less. This is built — see [Schemas](#schemas) — and it needed no language change at all.
+
+One thing it does not do is **enumerations**, which are the most obvious next thing to want
+and have no good spelling yet. `["debug" "info"]` already means an array whose elements are
+described by one type, so it cannot also mean a choice between two literals, and a long form
+(`{enum […]}`) collides with an object schema that happens to have a member called `enum`.
+Left out rather than guessed at.
 
 ### Undecided within the above
 

@@ -12,7 +12,7 @@ tot — JSON with the punctuation removed
 
 USAGE
     tot fmt [--check] [FILE]...   format in place, or stdin to stdout
-    tot check [--strict] [FILE]...
+    tot check [--strict] [--schema=FILE] [FILE]...
                                   parse and report errors
     tot merge [FILE]...           fold documents together, left to right
     tot get <PATH> [FILE]         print the one value at PATH
@@ -27,6 +27,7 @@ one layer of a merge; a file actually named `-` is `./-`.
 FLAGS
     --check         fmt: write nothing, and exit 1 if any file would change
     --strict        check: also warn when a member's value is not on its key's line
+    --schema=FILE   check: also check the shape against the schema in FILE
     --raw           get: print a string with no quotes and no escapes
                     set: take VALUE as a string, spelled literally
     --create        set: build the objects on the way to PATH if they are missing
@@ -37,6 +38,21 @@ FLAGS
     --null=error    to toml: refuse to convert instead
     --              end the flags; `-` is a bareword character, so a key, a path,
                     or a file may itself start with `--`
+
+SCHEMA
+    A schema is a tot document shaped like the ones it describes, with a type
+    where each value would be:
+
+        name    string
+        listen  {host string port int tls? bool}
+        regions [string]
+        labels  {* string}
+        retries int|null
+
+    Types are any, string, int, float, bool, and null, joined with `|`. A `?` on
+    a key makes the member optional; a `*` key covers every other key. Without
+    one, a member the schema does not name is an error — catching a typo is most
+    of what checking a shape is for.
 
 MERGE
     Objects merge member by member; anything else is replaced whole. An array
@@ -160,12 +176,28 @@ fn fmt(args: &[String]) -> Result<ExitCode, String> {
 fn check(args: &[String]) -> Result<ExitCode, String> {
     let (flags, files) = split(args);
     let mut strict = false;
+    let mut schema_file = None;
     for flag in flags {
         match flag {
             "--strict" => strict = true,
+            _ if flag.starts_with("--schema=") => {
+                schema_file = Some(&flag["--schema=".len()..]);
+            }
+            "--schema" => {
+                return Err("`--schema` takes its file with an `=`: `--schema=shape.tot`".into());
+            }
             other => return Err(unknown_flag(other)),
         }
     }
+
+    // A schema that is not a schema is a bad command line, not a bad document.
+    let schema = match schema_file {
+        Some(path) => {
+            let src = read_file(path)?;
+            Some(tot::Schema::parse(&src).map_err(|e| format!("in {path}\n{}", e.render(&src)))?)
+        }
+        None => None,
+    };
 
     let mut status = Status::default();
     for source in sources(&files) {
@@ -179,21 +211,32 @@ fn check(args: &[String]) -> Result<ExitCode, String> {
             tot::parse(&src).map(|_| Vec::new())
         };
 
-        match result {
+        let warnings = match result {
+            Ok(warnings) => warnings,
             Err(e) => {
                 eprintln!("tot: in {}", source.label());
                 eprint!("{}", e.render(&src));
                 status.invalid();
+                continue;
             }
-            Ok(warnings) if !warnings.is_empty() => {
-                eprintln!("tot: in {}", source.label());
-                for warning in &warnings {
-                    eprint!("{}", warning.render(&src));
-                }
-                status.invalid();
-            }
-            Ok(_) => {}
+        };
+        // The document parsed, so the schema can say something useful about it.
+        let violations = match &schema {
+            Some(schema) => schema.check(&src).expect("already parsed"),
+            None => Vec::new(),
+        };
+
+        if warnings.is_empty() && violations.is_empty() {
+            continue;
         }
+        eprintln!("tot: in {}", source.label());
+        for violation in &violations {
+            eprint!("{}", violation.render(&src));
+        }
+        for warning in &warnings {
+            eprint!("{}", warning.render(&src));
+        }
+        status.invalid();
     }
 
     Ok(status.into())

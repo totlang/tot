@@ -24,6 +24,7 @@ mod lint;
 mod merge;
 mod parse;
 mod path;
+mod schema;
 mod value;
 
 pub mod json;
@@ -37,6 +38,7 @@ pub use lint::{Warning, lint};
 pub use merge::{Nulls, merge, merge_into};
 pub use parse::{parse, parse_value};
 pub use path::{Missing, Path};
+pub use schema::{Schema, Violation};
 #[cfg(feature = "serde")]
 pub use serde::{from_str, from_value, to_string, to_value};
 pub use value::{Float, Integer, Map, Value};
