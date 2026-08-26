@@ -7,6 +7,17 @@ version = "0.1.0"
 edition = "2024"
 description = "JSON with the punctuation removed"
 
-# The library stays dependency-free. The YAML and TOML converters need third-party
-# parsers, so they live in the `tot-cli` crate instead.
+# The library stays dependency-free by default. The YAML and TOML converters need
+# third-party parsers, so they live in the `tot-cli` crate instead.
 [dependencies]
+serde = { version = "1.0", optional = true }
+
+[features]
+# Off by default so that the parser, the formatter, and JSON output cost nothing.
+serde = ["dep:serde"]
+
+[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }
+
+[package.metadata.docs.rs]
+all-features = true

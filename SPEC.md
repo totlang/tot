@@ -361,9 +361,25 @@ index   = "[" [0-9]+ "]"
   demand. Integer lexemes are canonical (leading zeros are a parse error) so their equality is
   value equality; float equality is lexical, and `1.0`, `1.00`, and `1e0` are distinct values
   that compare equal only through `as_f64`.
-- A `serde` `Serializer`/`Deserializer` pair so `tot` plugs into the Rust ecosystem, plus a
-  lossless CST for the formatter — comments, blank lines, and inline/block choice don't
-  survive a serde round trip.
+- A `serde` `Serializer`/`Deserializer` pair so `tot` plugs into the Rust ecosystem, behind an
+  off-by-default feature so the parser and formatter stay dependency-free. Both directions go
+  through `Value` rather than to and from text: the formatter already writes a `Value` well and
+  the parser already reads one, so streaming would be a second copy of both.
+  - What round-trips is a *value*, not a document. Comments, blank lines, and the author's
+    inline-versus-block choices live in the CST, which serde never sees — which is why the
+    formatter has its own path and does not go through serde.
+  - Enums are externally tagged: a bare string for a unit variant, `{Variant payload}` for the
+    rest. That is the shape serde's own derive reads back.
+  - A deserialization error names the offending value as a path, spelled the way the CLI spells
+    one, so the location in a message can be handed straight to `tot get`.
+  - The integer/float split is enforced in both directions: `1.0` will not deserialize into a
+    `u32`, though `1` will deserialize into an `f64`. Infinity and NaN are an error rather than
+    the `null` a JSON encoder writes.
+  - A tot key is always a string, so an integer or boolean map key is written as its text and
+    parsed back out of it. Float keys are refused in both directions.
+  - Integer lexemes survive up to 128 bits, which is as wide as serde's model goes. Float
+    lexemes do not: serde carries the number and not the spelling, so `1.` comes back as `1.0`
+    and a `Float`, whose equality is lexical, does not compare equal to itself afterwards.
 - Object key order is preserved in every direction.
 - Recursion is depth-limited so that pathological nesting is a diagnostic, not a stack
   overflow.

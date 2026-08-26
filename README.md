@@ -134,8 +134,42 @@ Numbers keep their original lexeme, so integers wider than `i64` survive a round
 `Integer` equality is value equality, but **`Float` equality is lexical** — `1.0 != 1.00`.
 Compare `as_f64()` if you mean value equality.
 
-The `tot` crate has **no dependencies**. YAML and TOML need third-party parsers, so they live
-in `tot-cli` instead.
+The `tot` crate has **no dependencies by default**. YAML and TOML need third-party parsers, so
+they live in `tot-cli` instead.
+
+### serde
+
+Behind the `serde` feature, off by default:
+
+```toml
+tot = { version = "0.1", features = ["serde"] }
+```
+
+```rust
+let config: Config = tot::from_str(src)?;         // any DeserializeOwned
+let text          = tot::to_string(&config)?;     // any Serialize
+let value         = tot::to_value(&config)?;      // -> Value
+let config: Config = tot::from_value(&value)?;    // borrows, so `&'a str` fields work
+```
+
+Both directions go through `Value` rather than straight to text — the formatter and parser
+already do that work well, and a streaming implementation would be a second copy of both.
+
+- **A value round-trips, not a document.** Comments, blank lines, and inline-vs-block choices
+  live in the CST, which serde never sees. `to_string` writes block form like any converter.
+- Errors name the offending value, spelled as a path: ``invalid type: string "8080", expected
+  u16 at `listen.port` ``. That string is a real path — hand it to `tot get`. `Error::path()`
+  gets it alone; `Error::parse_error()` gets the span when the document didn't parse at all.
+- Enums are externally tagged: `"off"` for a unit variant, `retry 5` for anything else.
+- `null` is `None`; `false` and `0` are `Some`.
+- `1.0` will not deserialize into a `u32` — the language keeps integers and floats apart, and
+  so does this. An integer *will* deserialize into an `f64`.
+- Integer map keys (`BTreeMap<u16, _>`) work in both directions; float keys work in neither.
+- Infinity and NaN are a serialization error rather than a silent `null`.
+- `Value` itself is `Serialize + Deserialize`, so part of a document can stay untyped.
+- **Float lexemes are normalized** — serde carries the number, not the spelling, so `1.` comes
+  back as `1.0`. Since `Float` equality is lexical, a `Value` with such a lexeme is `!=` itself
+  after a serde round trip. Integer lexemes are unaffected, up to 128 bits.
 
 ## Layout
 
@@ -148,6 +182,7 @@ src/                tot — library, zero dependencies
   lint.rs           opt-in checks (over the CST); nothing here is a language rule
   path.rs           `a.b[0]` paths — a CLI convenience, not part of the language
   json.rs           JSON output only
+  serde/            optional; ser.rs and de.rs, both via Value
   value.rs          Value, Integer, Float, Map
   error.rs          Span, Error, shared caret rendering
 cli/                tot-cli — binary `tot`; deps: toml, yaml_serde
@@ -160,14 +195,13 @@ straight out of the gaps between token spans, so there's no second lexer.
 ## Build
 
 ```bash
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all --check
 ```
 
+**`--all-features` matters** — `serde` is off by default, so without it the serde tests compile
+to nothing and pass silently. Run clippy both ways; the feature gate is easy to get wrong.
+
 Edition 2024. Formatter tests assert two properties on every fixture, not just expected output:
 formatting preserves the parsed value, and formatting is idempotent.
-
-## Not built yet
-
-- serde `Serializer` / `Deserializer`

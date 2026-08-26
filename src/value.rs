@@ -111,6 +111,16 @@ impl Integer {
         Integer(value.to_string())
     }
 
+    /// Build from a wide machine integer.
+    pub fn from_i128(value: i128) -> Self {
+        Integer(value.to_string())
+    }
+
+    /// Build from a wide unsigned machine integer.
+    pub fn from_u128(value: u128) -> Self {
+        Integer(value.to_string())
+    }
+
     /// The integer exactly as it was written.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -128,6 +138,11 @@ impl Integer {
 
     /// The value as an `i128`, if it fits.
     pub fn as_i128(&self) -> Option<i128> {
+        self.0.parse().ok()
+    }
+
+    /// The value as a `u128`, if it fits and is non-negative.
+    pub fn as_u128(&self) -> Option<u128> {
         self.0.parse().ok()
     }
 
@@ -158,15 +173,28 @@ impl Float {
     /// Build from a machine float. Returns `None` for infinities and NaN, which tot has no
     /// way to write.
     pub fn from_f64(value: f64) -> Option<Self> {
-        if !value.is_finite() {
-            return None;
-        }
-        let mut text = value.to_string();
-        // `1.0f64` renders as `1`, which would come back as an integer.
+        value
+            .is_finite()
+            .then(|| Float::from_text(value.to_string()))
+    }
+
+    /// Build from a single-precision float. Returns `None` for infinities and NaN.
+    ///
+    /// Goes through the `f32`'s own shortest spelling, so `0.1f32` stays `0.1` rather than
+    /// becoming the `0.10000000149011612` that widening it to `f64` would produce.
+    pub fn from_f32(value: f32) -> Option<Self> {
+        value
+            .is_finite()
+            .then(|| Float::from_text(value.to_string()))
+    }
+
+    /// A finite float's text, made into a float lexeme: `1.0f64` renders as `1`, which would
+    /// come back as an integer.
+    fn from_text(mut text: String) -> Self {
         if !text.contains(['.', 'e', 'E']) {
             text.push_str(".0");
         }
-        Some(Float(text))
+        Float(text)
     }
 
     /// The float exactly as it was written, which may be a form JSON does not accept
@@ -240,6 +268,13 @@ impl Map {
     /// Members in insertion order.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &Value)> {
         self.entries.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Members in insertion order, as a slice. serde's `MapAccess` asks for a key and its
+    /// value in two calls, so the deserializer needs to index rather than iterate.
+    #[cfg(feature = "serde")]
+    pub(crate) fn entries(&self) -> &[(String, Value)] {
+        &self.entries
     }
 
     /// Keys in insertion order.

@@ -172,7 +172,7 @@ fn members(map: &Map) -> String {
 /// Spells a key the way a path spells it, so a name offered as a suggestion can be typed
 /// straight back. The keys that most need this — a `.` or a space in them — are exactly the
 /// ones a reader would otherwise get wrong.
-fn as_segment(key: &str) -> String {
+pub(crate) fn as_segment(key: &str) -> String {
     if can_be_bare(key) && !key.contains('.') {
         return key.to_string();
     }
@@ -190,7 +190,8 @@ fn count(len: usize) -> String {
     }
 }
 
-fn kind(value: &Value) -> &'static str {
+/// Names a value's type for a message, with its article.
+pub(crate) fn kind(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
         Value::Bool(_) => "a boolean",

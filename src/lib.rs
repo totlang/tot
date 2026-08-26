@@ -27,9 +27,14 @@ mod value;
 
 pub mod json;
 
+#[cfg(feature = "serde")]
+pub mod serde;
+
 pub use error::{Error, Span};
 pub use fmt::{format, format_value};
 pub use lint::{Warning, lint};
 pub use parse::parse;
 pub use path::Path;
+#[cfg(feature = "serde")]
+pub use serde::{from_str, from_value, to_string, to_value};
 pub use value::{Float, Integer, Map, Value};
