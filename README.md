@@ -73,6 +73,10 @@ doesn't apply to the chosen format is an error, not a no-op.
 
 `from json` does no conversion. JSON is already tot, so it just reparses and reformats.
 
+`from` writes a string as a `"""` block when it has line breaks and every line reads back
+unchanged, so converted shell snippets and banners stay readable instead of collapsing into
+one `\n`-laden line. A line ending in a space or tab falls back to a quoted literal.
+
 The formatter **preserves inline vs. block** and never reflows — running `fmt` over minified
 JSON gives you back one correctly-punctuated long line, not an exploded document. It unquotes
 keys where legal, indents two spaces, and emits LF.
@@ -139,5 +143,3 @@ formatting preserves the parsed value, and formatting is idempotent.
 - `tot check --strict` — warn when a member spans a newline
 - `tot get <path>`
 - serde `Serializer` / `Deserializer`
-- `format_value` writes every string as a single-line escaped literal, so a newline-heavy
-  string converted from JSON comes out as one long `\n`-laden line instead of a `"""` block

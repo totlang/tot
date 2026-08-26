@@ -273,6 +273,12 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
   - Inline collections carry no inner padding: `{a 1}` and `[1 2]`, matching JSON.
 - Converters (`tot from json`, etc.) have no author intent to preserve and emit block form for
   everything except empty collections, which stay `{}` / `[]`.
+  - A string is written as a `"""` block when it contains a line break and every line reads
+    back unchanged. A line ending in a space or tab rules the whole string out — the reader
+    blanks a whitespace-only line, and trailing whitespace is the first thing an editor
+    strips. Everything else is handled by escaping: a backslash, a carriage return that would
+    otherwise be eaten as a line ending, and a `"""` opening a line, which would close the
+    string. Quotes anywhere else are left bare so an embedded script stays readable.
 - Multi-line strings are re-indented one level inside their member; the value is unchanged.
   This is well defined only because the indentation prefix is anchored to the closing
   delimiter, which moves along with the content.

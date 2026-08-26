@@ -9,6 +9,7 @@ use crate::cst::{self, Body, Collection, Document, Item, Lead, Node};
 use crate::error::Error;
 use crate::lex::can_be_bare;
 use crate::value::{Value, write_escaped};
+use std::fmt::Write as _;
 
 /// Format a tot document into its canonical form.
 ///
@@ -232,11 +233,7 @@ fn write_value(out: &mut String, value: &Value, level: usize) {
         Value::Integer(i) => out.push_str(i.as_str()),
         // Both lexemes are valid tot as they stand; only JSON needs `1.` normalized.
         Value::Float(f) => out.push_str(f.as_str()),
-        Value::String(s) => {
-            out.push('"');
-            write_escaped(out, s);
-            out.push('"');
-        }
+        Value::String(s) => write_string(out, s, level),
         Value::Array(items) if items.is_empty() => out.push_str("[]"),
         Value::Array(items) => {
             out.push_str("[\n");
@@ -256,6 +253,87 @@ fn write_value(out: &mut String, value: &Value, level: usize) {
             }
             write_indent(out, level);
             out.push('}');
+        }
+    }
+}
+
+/// Writes a string, as a `"""` block where that round-trips and as a quoted literal
+/// otherwise. Config files hold shell snippets, PEM blocks, and banners; a converter that
+/// emits those as one `\n`-laden line is correct but useless.
+fn write_string(out: &mut String, s: &str, level: usize) {
+    match block_lines(s) {
+        Some(lines) => write_block_string(out, &lines, level),
+        None => {
+            out.push('"');
+            write_escaped(out, s);
+            out.push('"');
+        }
+    }
+}
+
+/// The lines of a string that can be written as a block, or `None` if it cannot be.
+///
+/// A line ending in a space or tab rules the whole string out. The reader turns a
+/// whitespace-only line into an empty one, so such a line would come back changed, and even
+/// where it would survive, trailing whitespace is the first thing an editor or a pre-commit
+/// hook strips. Everything else is handled by escaping.
+fn block_lines(s: &str) -> Option<Vec<&str>> {
+    if !s.contains('\n') {
+        return None;
+    }
+    let lines: Vec<&str> = s.split('\n').collect();
+    if lines.iter().any(|line| line.ends_with([' ', '\t'])) {
+        return None;
+    }
+    Some(lines)
+}
+
+fn write_block_string(out: &mut String, lines: &[&str], level: usize) {
+    // The closing delimiter defines the indentation, so content sits at the same level.
+    let prefix = "  ".repeat(level + 1);
+    out.push_str("\"\"\"\n");
+    for line in lines {
+        // Blank lines are written empty rather than indented: trailing whitespace would
+        // both read back wrong and invite an editor to change the value.
+        if line.is_empty() {
+            out.push('\n');
+            continue;
+        }
+        out.push_str(&prefix);
+        write_block_line(out, line);
+        out.push('\n');
+    }
+    out.push_str(&prefix);
+    out.push_str("\"\"\"");
+}
+
+/// Escapes one line of block content.
+///
+/// `"` is left alone almost everywhere: a `"""` run only closes the string when it opens a
+/// line, so that is the one position needing an escape. Leaving the rest bare is what keeps
+/// an embedded shell script readable. A newline is structural here, and a tab is legal and
+/// reads better than `\t`.
+fn write_block_line(out: &mut String, line: &str) {
+    let blanks = line.len() - line.trim_start_matches([' ', '\t']).len();
+    let rest = if line[blanks..].starts_with("\"\"\"") {
+        out.push_str(&line[..blanks]);
+        out.push_str("\\\"");
+        &line[blanks + 1..]
+    } else {
+        line
+    };
+
+    for c in rest.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            // A literal CR would be eaten as a line ending by the reader.
+            '\r' => out.push_str("\\r"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 && c != '\t' => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
         }
     }
 }

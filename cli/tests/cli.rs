@@ -192,6 +192,15 @@ fn yaml_round_trips() {
     assert_eq!(json(&back.stdout), json(DOC));
 }
 
+/// The case the converter exists for: a YAML block scalar comes out as a tot block, not as
+/// one long escaped line.
+#[test]
+fn from_yaml_emits_block_strings() {
+    let out = run(&["from", "yaml"], "motd: |-\n  hello\n\n  world\n");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "motd \"\"\"\n  hello\n\n  world\n  \"\"\"\n");
+}
+
 #[test]
 fn yaml_mappings_with_non_string_keys_are_refused() {
     let out = run(&["from", "yaml"], "1: one\n");

@@ -3,7 +3,7 @@
 //! Every fixture goes through [`f`], which checks the two properties a formatter owes you —
 //! the value is unchanged, and formatting again is a no-op — before returning the output.
 
-use tot::{format, parse};
+use tot::{Map, Value, format, format_value, parse};
 
 fn f(src: &str) -> String {
     let once = format(src).unwrap_or_else(|e| panic!("{}", e.render(src)));
@@ -203,6 +203,94 @@ fn a_thoroughly_ugly_document_comes_out_clean() {
         // The blank lines between the header comment and the body are kept, collapsed to one.
         "#  leading note\n\na 1\nb {\n  c [1 2 {d true}]\n  e null\n} # tail\n"
     );
+}
+
+// --- format_value: emitting a Value with no source to preserve -----------------------------
+
+/// `format_value(&{k: s})`, for testing how one string is written.
+fn emit(s: &str) -> String {
+    let mut map = Map::new();
+    map.insert("k".to_string(), Value::String(s.to_string()));
+    format_value(&Value::Object(map))
+}
+
+#[test]
+fn strings_become_blocks_only_when_they_have_line_breaks() {
+    assert_eq!(emit("one\ntwo"), "k \"\"\"\n  one\n  two\n  \"\"\"\n");
+    assert_eq!(emit("one line"), "k \"one line\"\n");
+    assert_eq!(emit(""), "k \"\"\n");
+    // A line ending in whitespace rules the whole string out: the reader would blank a
+    // whitespace-only line, and an editor would strip the rest.
+    assert_eq!(emit("one \ntwo"), "k \"one \\ntwo\"\n");
+    assert_eq!(emit("   \ntwo"), "k \"   \\ntwo\"\n");
+}
+
+/// The property that makes the block form safe to choose automatically: whatever is emitted
+/// must read back byte-for-byte, and must already be canonical.
+#[test]
+fn block_strings_survive_the_round_trip() {
+    let cases = [
+        "one\ntwo",
+        "one\n\ntwo",
+        "trailing newline\n",
+        "two trailing newlines\n\n",
+        "\nleading newline",
+        "\n",
+        "\n\n",
+        "has \"quotes\" inside\nand more",
+        "\"\"\"\nopens with a triple quote",
+        "  \"\"\" indented triple quote\nnext",
+        "ends with a backslash \\\nnext line",
+        "tab\there\nand\tthere",
+        "carriage \r return\nnext",
+        "bell \u{7} here\nnext",
+        "#not a comment\nnext",
+        "}\n]\n{",
+        "set -e\nif [ -f \"$1\" ]; then\n  echo \"yes\"\nfi",
+        // These fall back to a quoted literal.
+        "trailing space \nnext",
+        "   \nwhitespace-only line",
+        "no newline at all",
+        "",
+    ];
+
+    for case in cases {
+        let emitted = emit(case);
+        let reparsed = parse(&emitted).unwrap_or_else(|e| {
+            panic!(
+                "{case:?} did not re-parse\n{emitted}\n{}",
+                e.render(&emitted)
+            )
+        });
+        assert_eq!(
+            reparsed.get("k").and_then(Value::as_str),
+            Some(case),
+            "value changed\n--- emitted ---\n{emitted}"
+        );
+        assert_eq!(
+            format(&emitted).unwrap(),
+            emitted,
+            "not canonical\n--- emitted ---\n{emitted}"
+        );
+    }
+}
+
+#[test]
+fn block_strings_are_indented_with_their_member() {
+    let mut inner = Map::new();
+    inner.insert(
+        "motd".to_string(),
+        Value::String("hello\nworld".to_string()),
+    );
+    let mut outer = Map::new();
+    outer.insert("service".to_string(), Value::Object(inner));
+
+    let emitted = format_value(&Value::Object(outer));
+    assert_eq!(
+        emitted,
+        "service {\n  motd \"\"\"\n    hello\n    world\n    \"\"\"\n}\n"
+    );
+    assert_eq!(format(&emitted).unwrap(), emitted);
 }
 
 #[test]
