@@ -27,7 +27,9 @@ address {
 
 1. **The JSON data model**, with JSON's single number type split into integers and floats.
    object, array, string, integer, float, `true`, `false`, `null`. No dates, no anchors, no
-   tags, no includes, no interpolation.
+   tags, no includes, no interpolation. (Composing documents is a real need and is taken up
+   under [Composition](#composition-prospective) — the goal there is to serve it *without*
+   putting any of this into the data language.)
 2. **Every JSON document is a valid tot document.** Not "convertible to" — literally valid,
    byte for byte. Paste JSON into a `.tot` file and it parses.
 3. **No significant whitespace.** A tot document may be written entirely on one line, and
@@ -403,6 +405,127 @@ index   = "[" [0-9]+ "]"
 - Object key order is preserved in every direction.
 - Recursion is depth-limited so that pathological nesting is a diagnostic, not a stack
   overflow.
+
+## Composition (prospective)
+
+**Nothing in this section is implemented or decided.** It is the design deliberation for
+building larger documents out of smaller ones, kept here so the reasoning survives the
+conversation that produced it.
+
+The need is real: base configuration plus per-environment overlays, a fragment shared by
+several documents, a value that appears in five places. Every config format grows this
+eventually, and the ones that grew it badly — an unbounded expression language reachable from
+any file — are now hard to read, which is the one thing tot exists to prevent.
+
+The organizing principle below is that **the data language does not change.** A `.tot` file
+still denotes a value you can see by reading it, and no consumer of tot has to become an
+evaluator.
+
+### Most of it needs no language at all
+
+Layering is a CLI operation, not a syntax:
+
+```
+tot merge base.tot staging.tot regional/eu.tot
+tot set <path> <value> [FILE]
+```
+
+`merge` folds documents left to right:
+
+- **Objects merge recursively**, right wins on a conflicting scalar.
+- **Arrays replace, they do not concatenate.** Concatenation cannot be undone by a later
+  layer, and an overlay that can only ever add is the defect Kustomize needed strategic-merge
+  patches to dig out of. Replacement is predictable; a layer that wants to append can say so
+  with a path.
+- **`null` sets null**, because null is a real value here. Deleting a member is a different
+  operation, and a `--null=delete` flag would spell it — matching the `--null=omit|error`
+  vocabulary `to toml` already uses.
+
+`set` is the dual of `get`, and finishes that pair.
+
+Both are small. `Map::get_mut` and `Map::remove` already exist and are exactly what a
+recursive merge needs.
+
+**These come first, and not only because they are cheap.** They are the measurement: with
+layering in hand, whatever composition is still awkward is a specific, nameable thing rather
+than a guess. Designing an expression language before that is designing against an imagined
+requirement.
+
+### If syntax is still wanted: forms
+
+A `(head arg…)` form, evaluated at build time and replaced by its value.
+
+```tot
+replicas (if prod 5 1)
+image    (str registry "/" name ":" version)
+regions  (import "regions.tot")
+```
+
+This is the least bad sigil, and the cost is measurable. `(`, `)`, `@`, and `$` are all
+currently ordinary bareword characters:
+
+```
+(a) 1        -> {"(a)":1}
+@type 2      -> {"@type":2}
+$ref 3       -> {"$ref":3}
+```
+
+Any sigil comes out of that charset — the same trade `//` comments lost. But reserving `@` or
+`$` would stop `tot fmt` unquoting `"@type"` and `"$ref"`, which are JSON-LD and JSON Schema,
+precisely the documents `from json` exists to read. Parens in bare keys are far rarer, and
+they carry the property the whole idea depends on: **parens never appear in data, so
+computation is distinguishable from data by looking.**
+
+For the same reason a `(str …)` form beats `"${name}"` interpolation. Interpolation makes
+every string potentially computed and forces a reader to scan for it; a form keeps the
+computation visibly outside the quotes.
+
+### The constraint that has to be designed in first
+
+**No user-defined functions.** A fixed set of builtins, no `defn`, no recursion, evaluation
+total and terminating, no effects but `import` — which is resolved at build time and must be
+acyclic.
+
+This is the whole discipline. The moment `defn` exists, people write libraries, and a
+configuration file becomes a program that has to be read as a program. Roughly six forms is
+the target — `import`, `str`, `if`, `get`, `param`, `map` — and a seventh should be a
+deliberate decision, not a convenience.
+
+### Two file types
+
+Forms live in a template file that builds to tot:
+
+```
+tot build config.tott -o config.tot
+tot build --check config.tott
+```
+
+`--check` is the real prize: CI verifies the committed output still matches its source, the
+way `fmt --check` verifies formatting. It also keeps every design goal above intact, because
+the thing checked into the repository and read by every consumer is ordinary tot.
+
+The split also divides the labor cleanly. **Splicing members into a document is `merge`;
+embedding one value is `(import …)`.** Those are genuinely different operations, and a single
+syntax made to do both is where these designs usually go muddy.
+
+### Ranked ahead of all of it
+
+**Validation is worth more than templating.** A document that builds successfully and is
+wrong is the failure that actually gets hit, and generating documents makes it more likely,
+not less. `tot check --schema schema.tot`, with the schema itself written in tot, needs no
+language change at all and pays off immediately at the sizes that motivate composition in the
+first place.
+
+### Undecided within the above
+
+- Whether `merge` needs `--at <path>` for merging a fragment somewhere other than the root, or
+  whether `set` plus a shell pipeline covers it.
+- Whether `param` reads from `--set name=value`, the environment, or both. The environment is
+  convenient and makes a build unreproducible.
+- Whether a template file is a distinct extension or a `.tot` file with a marker. An extension
+  is honest; a marker is fewer file types to explain.
+- Whether `import` resolves relative to the importing file or the invocation. Relative to the
+  file is the only answer that makes a fragment relocatable.
 
 ## Open questions
 

@@ -39,7 +39,10 @@ it. [examples/config.tot](examples/config.tot) tours the syntax.
   survives. A float has to denote a real `f64`, so `1e999` is a parse error — tot has no way
   to write an infinity. (`1e-999` is fine; it's zero.)
 - **Duplicate keys are an error.** No last-wins.
-- **No dates, anchors, tags, includes, or interpolation.** Not planned.
+- **No dates, anchors, tags, includes, or interpolation.** Dates, anchors, and tags aren't
+  planned. Composing documents is — see [Composition](SPEC.md#composition-prospective) — but
+  the point of that design is to serve it from the CLI and a separate template file, so the
+  data language keeps this rule.
 
 Multi-line strings:
 
@@ -226,3 +229,12 @@ to nothing and pass silently. Run clippy both ways; the feature gate is easy to 
 
 Edition 2024. Formatter tests assert two properties on every fixture, not just expected output:
 formatting preserves the parsed value, and formatting is idempotent.
+
+## Next
+
+Building larger documents out of smaller ones is designed but not built:
+[Composition](SPEC.md#composition-prospective) in the spec has the reasoning and what's still
+open. The short version — `tot merge` and `tot set` need no language change and should come
+first, because they measure whether anything else is needed; a template layer, if it happens,
+lives in its own file type so `.tot` stays data. Schema validation is ranked ahead of all of
+it, because a document that builds and is wrong is the failure that actually gets hit.
