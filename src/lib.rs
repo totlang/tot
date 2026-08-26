@@ -35,8 +35,8 @@ pub use error::{Error, Span};
 pub use fmt::{format, format_value};
 pub use lint::{Warning, lint};
 pub use merge::{Nulls, merge, merge_into};
-pub use parse::parse;
-pub use path::Path;
+pub use parse::{parse, parse_value};
+pub use path::{Missing, Path};
 #[cfg(feature = "serde")]
 pub use serde::{from_str, from_value, to_string, to_value};
 pub use value::{Float, Integer, Map, Value};

@@ -411,6 +411,92 @@ fn get_reaches_a_key_that_needs_quoting() {
     );
 }
 
+// --- set ----------------------------------------------------------------------------------
+
+#[test]
+fn set_writes_a_value_and_prints_the_document() {
+    let out = json(&run(&["set", "port", "9090"], DOC).stdout);
+    assert!(out.contains("\"port\":9090"), "{out}");
+    assert_eq!(run(&["set", "a", "2"], "a 1\n").stdout, "a 2\n");
+    // A new member lands at the end.
+    assert_eq!(run(&["set", "b", "2"], "a 1\n").stdout, "a 1\nb 2\n");
+}
+
+/// The value is spelled the way `get` prints one, so the pair round-trips — including the
+/// quotes on a string, which is what `--raw` exists to avoid typing.
+#[test]
+fn set_takes_the_value_get_prints() {
+    assert_eq!(run(&["set", "a", "\"svc\""], "a 1\n").stdout, "a \"svc\"\n");
+    assert_eq!(
+        run(&["set", "--raw", "a", "svc"], "a 1\n").stdout,
+        "a \"svc\"\n"
+    );
+    assert_eq!(
+        run(&["set", "a", "[1 2]"], "a 1\n").stdout,
+        "a [\n  1\n  2\n]\n"
+    );
+    assert_eq!(
+        run(&["set", "a", "{b 1}"], "a 1\n").stdout,
+        "a {\n  b 1\n}\n"
+    );
+
+    // An unquoted string is the same parse error it would be in a document.
+    let out = run(&["set", "a", "svc"], "a 1\n");
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr.contains("string values must be quoted"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn set_needs_the_path_to_exist_unless_told_otherwise() {
+    let out = run(&["set", "a.b.c", "1"], "a {}\n");
+    assert_eq!(out.code, 1);
+    assert!(out.stdout.is_empty(), "{}", out.stdout);
+    assert!(out.stderr.contains("no member `b`"), "{}", out.stderr);
+
+    assert_eq!(
+        json(&run(&["set", "--create", "a.b.c", "1"], "a {}\n").stdout),
+        "{\"a\":{\"b\":{\"c\":1}}}\n"
+    );
+}
+
+#[test]
+fn set_needs_a_path_and_a_value() {
+    for args in [&["set"][..], &["set", "a"][..]] {
+        let out = run(args, "a 1\n");
+        assert_eq!(out.code, 2, "{args:?}");
+        assert!(
+            out.stderr.contains("needs a path and a value"),
+            "{}",
+            out.stderr
+        );
+    }
+}
+
+/// merge, get, and set all read and write documents, so they compose.
+#[test]
+fn set_chains_with_the_other_commands() {
+    let first = run(
+        &["set", "listen.port", "9090"],
+        "listen {host \"::\" port 80}\n",
+    );
+    assert_eq!(first.code, 0, "{}", first.stderr);
+    let second = run(&["set", "--raw", "listen.host", "0.0.0.0"], &first.stdout);
+    assert_eq!(second.code, 0, "{}", second.stderr);
+
+    assert_eq!(
+        json(&second.stdout),
+        "{\"listen\":{\"host\":\"0.0.0.0\",\"port\":9090}}\n"
+    );
+    assert_eq!(
+        run(&["get", "--raw", "listen.host"], &second.stdout).stdout,
+        "0.0.0.0\n"
+    );
+}
+
 /// `-` means stdin everywhere a FILE is taken, not only in a merge.
 #[test]
 fn a_dash_is_stdin_for_every_command() {

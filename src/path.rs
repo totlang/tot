@@ -89,53 +89,107 @@ impl Path {
             current = match (&segment.step, current) {
                 (Step::Key(key), Value::Object(map)) => match map.get(key) {
                     Some(value) => value,
-                    None => {
-                        return Err(Error::new(
-                            segment.span,
-                            format!("no member `{key}` in {}", self.container(i)),
-                        )
-                        .with_help(members(map)));
-                    }
+                    None => return Err(self.no_member(i, key, map)),
                 },
-                (Step::Key(key), other) => {
-                    return Err(Error::new(
-                        segment.span,
-                        format!(
-                            "cannot look up `{key}`: {} is {}, not an object",
-                            self.container(i),
-                            kind(other)
-                        ),
-                    ));
-                }
+                (Step::Key(key), other) => return Err(self.not_an_object(i, key, other)),
                 (Step::Index(n), Value::Array(items)) => match items.get(*n) {
                     Some(value) => value,
-                    None => {
-                        return Err(Error::new(
-                            segment.span,
-                            format!(
-                                "index {n} is out of range: {} has {}",
-                                self.container(i),
-                                count(items.len())
-                            ),
-                        ));
-                    }
+                    None => return Err(self.out_of_range(i, *n, items.len())),
                 },
-                (Step::Index(n), other) => {
-                    let error = Error::new(
-                        segment.span,
-                        format!(
-                            "cannot take element {n} of {}: it is {}, not an array",
-                            self.container(i),
-                            kind(other)
-                        ),
-                    );
-                    return Err(match other {
-                        Value::Object(_) => {
-                            error.with_help("an object is looked up by name, not by position")
-                        }
-                        _ => error,
-                    });
+                (Step::Index(n), other) => return Err(self.not_an_array(i, *n, other)),
+            };
+        }
+        Ok(current)
+    }
+
+    /// The value at this path, for changing it in place.
+    ///
+    /// Every segment has to be there already. Use [`set`](Path::set) to put a value somewhere
+    /// the document does not have yet.
+    pub fn get_mut<'v>(&self, document: &'v mut Value) -> Result<&'v mut Value, Error> {
+        self.walk(document, self.segments.len(), Missing::Reject)
+    }
+
+    /// Replaces the value at this path.
+    ///
+    /// **The last segment does not have to exist** — adding a member is what setting is for.
+    /// Every segment before it does, unless `missing` is [`Missing::Create`]; a mistyped path
+    /// should not quietly build a branch nobody asked for.
+    ///
+    /// An array element is never created, under either setting. The index would have to be
+    /// in range already, and there is no answer to what would fill the gap if it were not.
+    ///
+    /// ```
+    /// let mut doc = tot::parse("listen {port 8080}").unwrap();
+    /// let value = tot::Value::Bool(true);
+    ///
+    /// tot::Path::parse("listen.tls").unwrap()
+    ///     .set(&mut doc, value, tot::Missing::Reject)
+    ///     .unwrap();
+    /// assert_eq!(tot::format_value(&doc), "listen {\n  port 8080\n  tls true\n}\n");
+    /// ```
+    pub fn set(&self, document: &mut Value, value: Value, missing: Missing) -> Result<(), Error> {
+        // A path always has at least one segment; `parse` rejects an empty one.
+        let last = self.segments.len() - 1;
+        let parent = self.walk(document, last, missing)?;
+
+        match (&self.segments[last].step, parent) {
+            (Step::Key(key), Value::Object(map)) => {
+                // `insert` refuses a key that is already there, so an existing member is
+                // replaced through its slot, which also keeps its position.
+                match map.get_mut(key) {
+                    Some(slot) => *slot = value,
+                    None => {
+                        map.insert(key.clone(), value);
+                    }
                 }
+                Ok(())
+            }
+            (Step::Key(key), other) => Err(self.not_an_object(last, key, other)),
+            (Step::Index(n), Value::Array(items)) => {
+                let len = items.len();
+                match items.get_mut(*n) {
+                    Some(slot) => {
+                        *slot = value;
+                        Ok(())
+                    }
+                    None => Err(self.out_of_range(last, *n, len)),
+                }
+            }
+            (Step::Index(n), other) => Err(self.not_an_array(last, *n, other)),
+        }
+    }
+
+    /// Resolves the first `upto` segments, mutably, for the two callers above.
+    fn walk<'v>(
+        &self,
+        document: &'v mut Value,
+        upto: usize,
+        missing: Missing,
+    ) -> Result<&'v mut Value, Error> {
+        let mut current = document;
+        for (i, segment) in self.segments[..upto].iter().enumerate() {
+            current = match (&segment.step, current) {
+                (Step::Key(key), Value::Object(map)) => {
+                    if !map.contains_key(key) {
+                        if missing == Missing::Reject {
+                            return Err(self.no_member(i, key, map));
+                        }
+                        map.insert(key.clone(), Value::Object(Map::new()));
+                    }
+                    map.get_mut(key).expect("present, or just added")
+                }
+                (Step::Key(key), other) => return Err(self.not_an_object(i, key, other)),
+                (Step::Index(n), Value::Array(items)) => {
+                    // An index is never filled in: `Missing::Create` makes objects, because
+                    // there is no sensible value to pad an array with.
+                    let len = items.len();
+                    match items.get_mut(*n) {
+                        Some(value) => value,
+                        None => return Err(self.out_of_range(i, *n, len)),
+                    }
+                }
+                (Step::Index(n), other) => return Err(self.not_an_array(i, *n, other)),
             };
         }
         Ok(current)
@@ -148,6 +202,68 @@ impl Path {
             Some(prev) => format!("`{}`", &self.text[..self.segments[prev].span.end]),
         }
     }
+
+    // The four ways a path can fail to resolve. Shared so that reading and writing cannot
+    // drift apart on what they call the same problem.
+
+    fn no_member(&self, i: usize, key: &str, map: &Map) -> Error {
+        Error::new(
+            self.segments[i].span,
+            format!("no member `{key}` in {}", self.container(i)),
+        )
+        .with_help(members(map))
+    }
+
+    fn not_an_object(&self, i: usize, key: &str, found: &Value) -> Error {
+        Error::new(
+            self.segments[i].span,
+            format!(
+                "cannot look up `{key}`: {} is {}, not an object",
+                self.container(i),
+                kind(found)
+            ),
+        )
+    }
+
+    fn out_of_range(&self, i: usize, n: usize, len: usize) -> Error {
+        Error::new(
+            self.segments[i].span,
+            format!(
+                "index {n} is out of range: {} has {}",
+                self.container(i),
+                count(len)
+            ),
+        )
+    }
+
+    fn not_an_array(&self, i: usize, n: usize, found: &Value) -> Error {
+        let error = Error::new(
+            self.segments[i].span,
+            format!(
+                "cannot take element {n} of {}: it is {}, not an array",
+                self.container(i),
+                kind(found)
+            ),
+        );
+        match found {
+            Value::Object(_) => error.with_help("an object is looked up by name, not by position"),
+            _ => error,
+        }
+    }
+}
+
+/// Whether [`Path::set`] may build the objects on the way to its destination.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Missing {
+    /// A member that is not there is an error. This is the default because a mistyped path is
+    /// far more likely than a genuinely missing branch, and the typo is invisible if it
+    /// silently succeeds.
+    #[default]
+    Reject,
+    /// Objects along the way are created as needed. Nothing that *is* there is replaced: a
+    /// scalar where an object is needed is still an error, since overwriting it would be
+    /// throwing away a value nobody asked to lose.
+    Create,
 }
 
 /// The keys that were there, which is usually enough to spot a typo. Truncated, because a

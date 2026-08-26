@@ -13,15 +13,34 @@ pub fn parse(src: &str) -> Result<Value, Error> {
     from_tokens(src, &tokenize(src)?)
 }
 
+/// Parse text that sits where a value goes — a command-line argument, a field in another
+/// format — rather than a whole file.
+///
+/// The grammar is a document's, so `host "::" port 80` is an object here exactly as it is at
+/// the top of a file, and anything [`format_value`](crate::format_value) writes reads back.
+/// The one difference is the diagnostic. A lone bareword in a file is most likely a key whose
+/// value was forgotten, and [`parse`] says so; in a value position there is no key to blame,
+/// so it is reported as a string that needs its quotes.
+///
+/// ```
+/// assert!(tot::parse("svc").unwrap_err().message.contains("has no value"));
+/// assert!(tot::parse_value("svc").unwrap_err().message.contains("must be quoted"));
+/// ```
+pub fn parse_value(src: &str) -> Result<Value, Error> {
+    Parser::new(src, &tokenize(src)?, Context::Value).document()
+}
+
 /// Parses an already-tokenized document, for callers that walk the same tokens twice.
 pub(crate) fn from_tokens(src: &str, tokens: &[Token]) -> Result<Value, Error> {
-    Parser {
-        src,
-        tokens,
-        pos: 0,
-        depth: 0,
-    }
-    .document()
+    Parser::new(src, tokens, Context::Document).document()
+}
+
+/// Where the text came from. This changes no grammar — only which of two readings of a lone
+/// bareword the diagnostic assumes.
+#[derive(Clone, Copy, PartialEq)]
+enum Context {
+    Document,
+    Value,
 }
 
 struct Parser<'a, 't> {
@@ -29,9 +48,20 @@ struct Parser<'a, 't> {
     tokens: &'t [Token],
     pos: usize,
     depth: usize,
+    context: Context,
 }
 
-impl<'a> Parser<'a, '_> {
+impl<'a, 't> Parser<'a, 't> {
+    fn new(src: &'a str, tokens: &'t [Token], context: Context) -> Self {
+        Parser {
+            src,
+            tokens,
+            pos: 0,
+            depth: 0,
+            context,
+        }
+    }
+
     fn document(&mut self) -> Result<Value, Error> {
         if self.tokens.is_empty() {
             return Ok(Value::Object(Map::new()));
@@ -60,9 +90,11 @@ impl<'a> Parser<'a, '_> {
                 TokenKind::Str(s) => Ok(Value::String(s.clone())),
                 TokenKind::Bareword => match literal(self.text(span)) {
                     Some(value) => Ok(value),
-                    // A number-shaped lexeme that produced no value is out of range, not a
-                    // key whose value was forgotten.
-                    None if number_lexeme(self.text(span)).is_some() => {
+                    // Blame the key only where there could be one. A number-shaped lexeme
+                    // that produced no value is out of range either way.
+                    None if self.context == Context::Value
+                        || number_lexeme(self.text(span)).is_some() =>
+                    {
                         Err(bad_value(span, self.text(span)))
                     }
                     None => Err(missing_value(span, self.text(span))),

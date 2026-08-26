@@ -74,6 +74,7 @@ package, or use `--workspace`.
 | `tot check [--strict] [FILE]...` | parse and report diagnostics |
 | `tot merge [FILE]...` | fold documents together, left to right |
 | `tot get [--raw] <PATH> [FILE]` | print the one value at PATH |
+| `tot set <PATH> <VALUE> [FILE]` | write VALUE at PATH and print the document |
 | `tot to <json\|yaml\|toml> [FILE]` | write this document as another format |
 | `tot from <json\|yaml\|toml> [FILE]` | read another format and write tot |
 
@@ -82,7 +83,8 @@ and `check`, every input is processed before exiting — one bad file doesn't hi
 Exit codes: `0` ok, `1` the input didn't answer the request (unformatted, unparseable, or no
 such path), `2` I/O or bad arguments.
 
-Flags: `--raw` (`get`), `--null=set|delete` (`merge`, default `set`), `--compact` (`to json`),
+Flags: `--raw` (`get`, `set`), `--create` (`set`), `--null=set|delete` (`merge`, default
+`set`), `--compact` (`to json`),
 `--null=omit|error` (`to toml`, default `omit`). A flag that doesn't apply to the chosen format
 is an error, not a no-op. A bare `--` ends the flags — `-` is a bareword character, so `--foo`
 is a legal key and a legal path, and a file can be named that way: `tot get -- --foo config.tot`.
@@ -126,6 +128,24 @@ spellings of a key differ. Output is tot, so it pipes back into `tot to json` an
 document doesn't have is exit 1 and names what was there instead. No wildcards or filters — if
 you want those, `tot to json | jq`.
 
+`set` is the dual, and takes a value spelled the way `get` prints one:
+
+```bash
+tot set listen.port 8080 config.tot
+tot set --raw name svc config.tot        # a string, without typing '"svc"'
+```
+
+So a string needs its quotes (`tot set name '"svc"'`) unless you use `--raw`, and a brace-less
+`host "::" port 80` is an object here exactly as it is at the top of a file.
+
+**The last step of the path may be new** — adding a member is what setting is for — but the
+steps before it must exist, unless `--create` builds them. That's the default because a
+mistyped path is likelier than a genuinely missing branch, and a silent success hides the typo.
+`--create` never replaces something already there, and never invents array elements.
+
+`merge`, `get`, and `set` all read and write documents, so they chain: `tot merge base.tot
+prod.tot | tot set replicas 3 | tot to json`. None of them keep comments.
+
 `from json` does no conversion. JSON is already tot, so it just reparses and reformats.
 
 `from` writes a string as a `"""` block when it has line breaks and every line reads back
@@ -154,7 +174,12 @@ let folded = tot::merge(documents, tot::Nulls::Set);   // or merge_into(&mut bas
 let json  = tot::json::to_string_pretty(&value);
 let warns = tot::lint(src)?;                      // -> Vec<Warning>, all legal-but-risky
 let at    = tot::Path::parse("a.b[0]")?.get(&value)?;
+let v     = tot::parse_value(arg)?;               // text in a value position, not a file
 ```
+
+`parse_value` uses the same grammar as `parse`; the difference is the diagnostic. A lone
+bareword in a file is most likely a key that lost its value and is reported that way, but as a
+value there's no key to lose one, so it's reported as a string needing quotes.
 
 `Path::parse` and `Path::get` are separate calls because their failures are different problems
 — a malformed path is your bug, a missing one is the document's answer. Spans on a path error
@@ -254,11 +279,13 @@ formatting preserves the parsed value, and formatting is idempotent.
 
 ## Next
 
-`tot merge` is built. Still open, in rough order:
+`tot merge` and `tot set` are built. Still open, in rough order:
 
-- **`tot set <path> <value>`** — the dual of `get`, finishing that pair.
 - **Schema validation** (`tot check --schema schema.tot`, schema written in tot). Ranked ahead
   of any templating: a document that builds and is wrong is the failure that actually gets hit.
+- **In-place editing that keeps comments.** `set` and `merge` fold values, so they can't write
+  back over a hand-written config without losing its comments. Doing that properly means
+  splicing text through the CST, which is a different and larger feature.
 - **A template layer**, if `merge` and `set` turn out not to be enough. The design — parens for
   forms, no user-defined functions, a separate file type so `.tot` stays data — is written up
   under [Composition](SPEC.md#composition-prospective), along with why the alternatives lose.

@@ -205,6 +205,48 @@ fn a_closing_delimiter_ends_its_line() {
     assert_eq!(ok.get("motd").unwrap().as_str(), Some("hello\n\"\"\" oops"));
 }
 
+// --- reading text that sits where a value goes ------------------------------------------------
+
+/// Same grammar, different guess about what a lone bareword means. In a file it is most
+/// likely a key that lost its value; in a value position there is no key to lose one.
+#[test]
+fn parse_value_blames_the_value_not_a_missing_key() {
+    assert!(err("svc").contains("has no value"));
+
+    let e = tot::parse_value("svc").expect_err("should not parse");
+    assert!(e.message.contains("string values must be quoted"), "{e}");
+    assert!(e.help.unwrap().contains(r#"write `"svc"`"#));
+}
+
+/// The grammar really is a document's, so everything `format_value` writes reads back —
+/// including the brace-less object that `tot get` prints for a collection.
+#[test]
+fn parse_value_takes_whatever_a_document_takes() {
+    for src in [
+        "8080",
+        r#""svc""#,
+        "true",
+        "null",
+        "1.5",
+        "[1 2]",
+        "{a 1}",
+        r#"host "::" port 80"#,
+        "",
+    ] {
+        let value = tot::parse_value(src)
+            .unwrap_or_else(|e| panic!("`{src}` should parse as a value: {e}"));
+        assert_eq!(value, parse(src).unwrap(), "`{src}`");
+    }
+
+    // A key that really is missing its value still says so, because there is a key.
+    assert!(
+        tot::parse_value("a 1 b")
+            .unwrap_err()
+            .message
+            .contains("key `b` has no value")
+    );
+}
+
 // --- editing a parsed document --------------------------------------------------------------
 
 /// Read, change one thing, write it back — the reason a `Value` needs to be mutable at all.

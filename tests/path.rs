@@ -167,6 +167,153 @@ fn the_span_covers_the_failing_segment() {
     assert!(rendered.contains("       ^^^^"), "{rendered}");
 }
 
+// --- writing ----------------------------------------------------------------------------------
+
+/// Sets `path` to `value` in `DOC` and renders the result as compact JSON.
+fn set_in(src: &str, path: &str, value: &str, missing: tot::Missing) -> Result<String, String> {
+    let mut document = parse(src);
+    let path = Path::parse(path).map_err(|e| e.to_string())?;
+    path.set(&mut document, parse(value), missing)
+        .map_err(|e| e.to_string())?;
+    Ok(tot::json::to_string(&document))
+}
+
+fn set(path: &str, value: &str) -> Result<String, String> {
+    set_in(DOC, path, value, tot::Missing::Reject)
+}
+
+#[test]
+fn setting_replaces_a_value_in_place() {
+    let out = set("listen.port", "9090").unwrap();
+    assert!(
+        out.contains(r#""listen":{"host":"0.0.0.0","port":9090}"#),
+        "{out}"
+    );
+    assert_eq!(
+        set_in("a 1", "a", r#""x""#, tot::Missing::Reject).unwrap(),
+        r#"{"a":"x"}"#
+    );
+}
+
+/// Adding a member is the point of setting, so the last step may be new. It lands at the end,
+/// the way any new member does.
+#[test]
+fn the_last_step_may_be_new() {
+    let out = set("listen.tls", "true").unwrap();
+    assert!(out.contains(r#""port":8080,"tls":true"#), "{out}");
+    assert_eq!(
+        set_in("", "a", "1", tot::Missing::Reject).unwrap(),
+        r#"{"a":1}"#
+    );
+}
+
+/// Replacing a member must not move it: order is part of the document.
+#[test]
+fn setting_keeps_a_member_where_it_was() {
+    assert_eq!(
+        set_in("a 1 b 2 c 3", "b", "9", tot::Missing::Reject).unwrap(),
+        r#"{"a":1,"b":9,"c":3}"#
+    );
+}
+
+#[test]
+fn an_element_can_be_set_but_never_added() {
+    let out = set("regions[0]", r#""eu-west-1""#).unwrap();
+    assert!(
+        out.contains(r#""regions":["eu-west-1","eu-central-1"]"#),
+        "{out}"
+    );
+    assert!(
+        set("regions[2]", r#""x""#)
+            .unwrap_err()
+            .contains("out of range")
+    );
+    assert!(set("routes[0].path", r#""/z""#).is_ok());
+}
+
+/// A path that is not there is an error by default: a mistyped path is far likelier than a
+/// genuinely missing branch, and a silent success hides the typo.
+#[test]
+fn a_missing_step_before_the_last_is_rejected() {
+    let e = set("listen.tls.enabled", "true").unwrap_err();
+    assert!(e.contains("no member `tls` in `listen`"), "{e}");
+    assert!(
+        set("nope.deeper", "1")
+            .unwrap_err()
+            .contains("in the document")
+    );
+}
+
+#[test]
+fn create_builds_the_objects_on_the_way() {
+    let out = set_in("a 1", "b.c.d", "true", tot::Missing::Create).unwrap();
+    assert_eq!(out, r#"{"a":1,"b":{"c":{"d":true}}}"#);
+
+    // What is already there is left alone.
+    let out = set_in("a {x 1}", "a.y", "2", tot::Missing::Create).unwrap();
+    assert_eq!(out, r#"{"a":{"x":1,"y":2}}"#);
+}
+
+/// `Create` fills in what is missing. It never replaces what is present, because that would
+/// throw away a value nobody asked to lose.
+#[test]
+fn create_does_not_overwrite_a_value_of_the_wrong_kind() {
+    let e = set_in("a \"scalar\"", "a.b", "1", tot::Missing::Create).unwrap_err();
+    assert!(e.contains("`a` is a string, not an object"), "{e}");
+
+    // Nor does it invent array elements, under either setting.
+    let e = set_in("a []", "a[0].b", "1", tot::Missing::Create).unwrap_err();
+    assert!(e.contains("out of range"), "{e}");
+}
+
+#[test]
+fn setting_reports_a_type_error_the_way_reading_does() {
+    let e = set("name.first", "1").unwrap_err();
+    assert!(
+        e.contains("cannot look up `first`: `name` is a string, not an object"),
+        "{e}"
+    );
+    assert!(set("listen[0]", "1").unwrap_err().contains("not an array"));
+}
+
+/// `get_mut` is the plain dual of `get` — everything has to be there already.
+#[test]
+fn get_mut_reaches_an_existing_value() {
+    let mut document = parse(DOC);
+    let path = Path::parse("listen.port").unwrap();
+    *path.get_mut(&mut document).unwrap() = tot::Value::Bool(false);
+    assert_eq!(path.get(&document).unwrap().as_bool(), Some(false));
+
+    assert!(
+        Path::parse("listen.tls")
+            .unwrap()
+            .get_mut(&mut document)
+            .is_err()
+    );
+}
+
+/// What `get` prints is what `set` takes, so the pair round-trips.
+#[test]
+fn get_and_set_round_trip() {
+    let document = parse(DOC);
+    for path in [
+        "name",
+        "listen",
+        "listen.port",
+        "regions",
+        "regions[1]",
+        "routes[0]",
+    ] {
+        let path = Path::parse(path).unwrap();
+        let printed = tot::format_value(path.get(&document).unwrap());
+
+        let mut copy = parse(DOC);
+        path.set(&mut copy, parse(&printed), tot::Missing::Reject)
+            .unwrap_or_else(|e| panic!("setting `{}` back: {e}", path.text()));
+        assert_eq!(copy, document, "round trip through `{}`", path.text());
+    }
+}
+
 // --- paths that are not paths ---------------------------------------------------------------
 
 #[test]

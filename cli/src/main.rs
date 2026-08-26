@@ -16,6 +16,7 @@ USAGE
                                   parse and report errors
     tot merge [FILE]...           fold documents together, left to right
     tot get <PATH> [FILE]         print the one value at PATH
+    tot set <PATH> <VALUE> [FILE] write VALUE at PATH and print the document
     tot to <FORMAT> [FILE]        write this document as json, yaml, or toml
     tot from <FORMAT> [FILE]      read json, yaml, or toml and write tot
     tot help
@@ -27,6 +28,8 @@ FLAGS
     --check         fmt: write nothing, and exit 1 if any file would change
     --strict        check: also warn when a member's value is not on its key's line
     --raw           get: print a string with no quotes and no escapes
+                    set: take VALUE as a string, spelled literally
+    --create        set: build the objects on the way to PATH if they are missing
     --null=set      merge: an overlay's null sets the member to null (default)
     --null=delete   merge: an overlay's null removes the member instead
     --compact       to json: one line instead of indented
@@ -38,7 +41,17 @@ FLAGS
 MERGE
     Objects merge member by member; anything else is replaced whole. An array
     replaces rather than appending, because concatenation cannot be undone by a
-    later layer. Comments do not survive, the way they do not through `from`.
+    later layer.
+
+SET
+    VALUE is a tot value, spelled the way `get` prints one, so the two round-trip:
+    `tot set port 8080`, `tot set tags '[\"a\" \"b\"]'`. Setting a string needs
+    its quotes — `tot set name '\"svc\"'` — or `--raw`, which takes VALUE
+    literally. The last step of PATH may be new; the ones before it must exist
+    unless `--create` says otherwise. An array element is never created.
+
+    `merge`, `get`, and `set` all write a document to stdout, so they chain.
+    None of them keep comments: they fold values, the way `from` does.
 
 PATHS
     `.` selects a member and `[n]` an element: `listen.port`, `regions[0].name`.
@@ -76,6 +89,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "check" => check(&args[1..]),
         "merge" => merge(&args[1..]),
         "get" => get(&args[1..]),
+        "set" => set(&args[1..]),
         "to" => to(&args[1..]),
         "from" => from(&args[1..]),
         "help" | "--help" | "-h" => {
@@ -210,6 +224,51 @@ fn merge(args: &[String]) -> Result<ExitCode, String> {
     }
 
     print!("{}", tot::format_value(&tot::merge(documents, nulls)));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Writes one value into a document and prints the result.
+///
+/// The value argument is spelled the way `get` prints one, so the two round-trip: whatever
+/// `tot get a` gives you is what `tot set a` takes back.
+fn set(args: &[String]) -> Result<ExitCode, String> {
+    let (flags, positional) = split(args);
+    let mut raw = false;
+    let mut missing = tot::Missing::Reject;
+    for flag in flags {
+        match flag {
+            "--raw" => raw = true,
+            "--create" => missing = tot::Missing::Create,
+            other => return Err(unknown_flag(other)),
+        }
+    }
+
+    let (Some(text), Some(literal)) = (positional.first().copied(), positional.get(1).copied())
+    else {
+        return Err("`tot set` needs a path and a value, like `listen.port 8080`".to_string());
+    };
+    if positional.len() > 3 {
+        return Err("`tot set` takes at most one file".to_string());
+    }
+    let path = tot::Path::parse(text).map_err(|e| e.to_string())?;
+    let value = if raw {
+        tot::Value::String(literal.to_string())
+    } else {
+        tot::parse_value(literal)
+            .map_err(|e| format!("`{literal}` is not a valid tot value: {e}"))?
+    };
+
+    let file = positional.get(2).copied();
+    let src = read_input(file)?;
+    let Some(mut document) = parse_or_report(&src, label(file)) else {
+        return Ok(ExitCode::from(1));
+    };
+    if let Err(e) = path.set(&mut document, value, missing) {
+        eprintln!("tot: in {}: {e}", label(file));
+        return Ok(ExitCode::from(1));
+    }
+
+    print!("{}", tot::format_value(&document));
     Ok(ExitCode::SUCCESS)
 }
 

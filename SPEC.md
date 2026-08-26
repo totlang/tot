@@ -314,6 +314,7 @@ tot fmt [--check] [FILE]...       format in place, or stdin to stdout
 tot check [--strict] [FILE]...    parse and report errors
 tot merge [--null=…] [FILE]...    fold documents together, left to right
 tot get [--raw] <PATH> [FILE]     print the one value at PATH
+tot set <PATH> <VALUE> [FILE]     write VALUE at PATH
 tot to <json|yaml|toml> [FILE]    write this document as another format
 tot from <json|yaml|toml> [FILE]  read another format and write tot
 ```
@@ -389,6 +390,21 @@ index   = "[" [0-9]+ "]"
 - Output is a tot document, so `tot get` composes with the rest of the CLI. A collection comes
   back whole; `--raw` is for the case where a shell wants the contents of a string and not a
   tot rendering of it.
+- `set` takes a value spelled the way `get` prints one, so the two round-trip: a brace-less
+  `host "::" port 80` is an object here exactly as it is at the top of a file. A string
+  therefore needs its quotes, and `--raw` is the way out of typing them.
+  - The **last** step may name something new — adding a member is what setting is for. Every
+    step before it has to exist, unless `--create` says to build the objects on the way. That
+    is the default because a mistyped path is far likelier than a genuinely missing branch,
+    and a silent success hides the typo. `--create` never replaces what is already there.
+  - An array element is never created under either setting. The index has to be in range, and
+    there is no answer to what would fill the gap if it were not.
+  - Setting a member that exists leaves it where it was; a new one goes on the end. Key order
+    is part of a document.
+- A lone bareword means different things in the two positions, so the diagnostic differs.
+  `svc` in a file is most likely a key that lost its value and is reported that way; as a
+  value argument there is no key to lose one, so it is reported as a string needing quotes.
+  This is the only difference between `parse` and `parse_value`; the grammar is identical.
 - No wildcards, slices, or filters. That is a query language, and the reason to reach for one
   is a sign that the document should be converted to JSON and handed to `jq`.
 
@@ -432,9 +448,9 @@ index   = "[" [0-9]+ "]"
 ## Composition (prospective)
 
 The design deliberation for building larger documents out of smaller ones, kept here so the
-reasoning survives the conversation that produced it. **`tot merge` is built** — its rules are
-normative under [Merge](#merge) above. Everything below it in this section is neither
-implemented nor decided.
+reasoning survives the conversation that produced it. **`tot merge` and `tot set` are built** —
+their rules are normative under [CLI](#cli) above. Everything from *If syntax is still wanted*
+onward is neither implemented nor decided.
 
 The need is real: base configuration plus per-environment overlays, a fragment shared by
 several documents, a value that appears in five places. Every config format grows this
@@ -465,16 +481,20 @@ tot set <path> <value> [FILE]
   operation, and a `--null=delete` flag would spell it — matching the `--null=omit|error`
   vocabulary `to toml` already uses.
 
-`set` is the dual of `get`, and finishes that pair. It is not built yet.
+`set` is the dual of `get`, and finishes that pair.
 
 **These come first, and not only because they are cheap.** They are the measurement: with
 layering in hand, whatever composition is still awkward is a specific, nameable thing rather
 than a guess. Designing an expression language before that is designing against an imagined
 requirement.
 
-`merge` landed at about seventy lines, most of which is the doc comment explaining why an
-array replaces. `Map::get_mut` and `Map::remove`, added a commit earlier for unrelated
-reasons, turned out to be exactly what a recursive fold needs.
+Both landed small. `merge` is about seventy lines, most of it the doc comment explaining why
+an array replaces; `set` reuses the walk and the four diagnostics `get` already had, so it is
+mostly the question of what `Missing` should default to. `Map::get_mut` and `Map::remove`,
+added a commit earlier for unrelated reasons, turned out to be exactly what both needed.
+
+With them in hand, the measurement can start: what is still awkward about composing documents
+is now a question with a real answer rather than a guess.
 
 ### If syntax is still wanted: forms
 
