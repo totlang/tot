@@ -1,0 +1,51 @@
+# A tour of tot. Every value here survives a round trip through JSON.
+
+name "example-service"
+version 3
+enabled true
+
+# Keys are bare unless they contain a delimiter; values are typed by their syntax,
+# so a string is a string only when it is quoted.
+"log level" "debug"
+timeout 30
+sample-rate 0.25
+retries null
+
+# A dot is an ordinary bareword character, not a nesting operator: this is a single
+# key spelled `com.example.owner`, not three nested tables.
+com.example.owner "platform-team"
+
+replicas {
+  min 1
+  max 8
+}
+
+listen {
+  host "0.0.0.0"
+  port 8080
+  tls {enabled false} # an inline object stays inline
+}
+
+# Block arrays stay block, inline arrays stay inline. The formatter never reflows.
+regions ["us-west-2" "eu-central-1"]
+
+routes [
+  {
+    path "/healthz"
+    methods ["GET"]
+    public true
+  }
+  {
+    path "/v1/items"
+    methods ["GET" "POST"]
+    public false
+  }
+]
+
+# A multi-line string's indentation is anchored to its closing delimiter, so
+# reindenting the block around it cannot change the value.
+motd """
+  Welcome to example-service.
+
+  Docs live at /v1/docs.
+  """

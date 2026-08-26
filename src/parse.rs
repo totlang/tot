@@ -119,7 +119,7 @@ impl<'a> Parser<'a> {
             }
 
             let value = self.value()?;
-            if !map.insert_unique(key.clone(), value) {
+            if !map.insert(key.clone(), value) {
                 return Err(Error::new(key_span, format!("duplicate key `{key}`"))
                     .with_help("tot rejects duplicate keys rather than picking a winner"));
             }

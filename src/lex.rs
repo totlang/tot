@@ -48,6 +48,12 @@ struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     fn run(mut self) -> Result<Vec<Token>, Error> {
+        // A byte-order mark is not whitespace, so left alone it would silently become the
+        // first character of the first key. Editors write them; skip one.
+        if self.src.starts_with('\u{feff}') {
+            self.pos += '\u{feff}'.len_utf8();
+        }
+
         let mut tokens = Vec::new();
         loop {
             self.skip_trivia()?;

@@ -1,0 +1,14 @@
+[package]
+name = "tot-cli"
+version = "0.1.0"
+edition = "2024"
+description = "Command-line interface for tot"
+
+[[bin]]
+name = "tot"
+path = "src/main.rs"
+
+[dependencies]
+toml = { version = "1.1.4", features = ["preserve_order"] }
+tot = { path = ".." }
+yaml_serde = "0.10.7"

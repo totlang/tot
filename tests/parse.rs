@@ -7,7 +7,7 @@ use tot::{Value, parse};
 /// Parse and render as compact JSON, printing a full diagnostic if it fails.
 fn j(src: &str) -> String {
     match parse(src) {
-        Ok(value) => value.to_string(),
+        Ok(value) => tot::json::to_string(&value),
         Err(e) => panic!("expected a successful parse:\n{}", e.render(src)),
     }
 }
@@ -95,6 +95,13 @@ fn bareword_keys() {
     // A key is always a string, so literals and digits are ordinary keys.
     assert_eq!(j(r#"123 "x""#), r#"{"123":"x"}"#);
     assert_eq!(j(r#"true "x""#), r#"{"true":"x"}"#);
+}
+
+/// Editors write them, and a BOM is not whitespace, so leaving it alone would make it the
+/// first character of the first key.
+#[test]
+fn a_leading_byte_order_mark_is_skipped() {
+    assert_eq!(j("\u{feff}a 1"), r#"{"a":1}"#);
 }
 
 #[test]

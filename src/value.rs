@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::fmt::Write as _;
 
 /// A tot value. JSON's data model, with JSON's single number type split into integers and
 /// floats — a number is a float if it has a `.` or an exponent, and an integer otherwise.
@@ -100,6 +101,16 @@ impl Integer {
         Integer(lexeme.into())
     }
 
+    /// Build from a machine integer.
+    pub fn from_i64(value: i64) -> Self {
+        Integer(value.to_string())
+    }
+
+    /// Build from an unsigned machine integer, including values above `i64::MAX`.
+    pub fn from_u64(value: u64) -> Self {
+        Integer(value.to_string())
+    }
+
     /// The integer exactly as it was written.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -142,6 +153,20 @@ pub struct Float(String);
 impl Float {
     pub(crate) fn from_lexeme(lexeme: impl Into<String>) -> Self {
         Float(lexeme.into())
+    }
+
+    /// Build from a machine float. Returns `None` for infinities and NaN, which tot has no
+    /// way to write.
+    pub fn from_f64(value: f64) -> Option<Self> {
+        if !value.is_finite() {
+            return None;
+        }
+        let mut text = value.to_string();
+        // `1.0f64` renders as `1`, which would come back as an integer.
+        if !text.contains(['.', 'e', 'E']) {
+            text.push_str(".0");
+        }
+        Some(Float(text))
     }
 
     /// The float exactly as it was written, which may be a form JSON does not accept
@@ -224,7 +249,7 @@ impl Map {
 
     /// Appends a member. Returns `false` without modifying the map if `key` is already
     /// present — duplicate keys are a parse error in tot, so the caller reports it.
-    pub(crate) fn insert_unique(&mut self, key: String, value: Value) -> bool {
+    pub fn insert(&mut self, key: String, value: Value) -> bool {
         if self.index.contains_key(&key) {
             return false;
         }
@@ -241,57 +266,22 @@ impl PartialEq for Map {
     }
 }
 
-/// Renders as compact JSON. This is the debug/diagnostic form; the real emitters live in
-/// the conversion layer.
-impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Value::Null => f.write_str("null"),
-            Value::Bool(true) => f.write_str("true"),
-            Value::Bool(false) => f.write_str("false"),
-            Value::Integer(i) => write!(f, "{i}"),
-            Value::Float(x) => write!(f, "{x}"),
-            Value::String(s) => write_json_string(f, s),
-            Value::Array(items) => {
-                f.write_str("[")?;
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(",")?;
-                    }
-                    write!(f, "{item}")?;
-                }
-                f.write_str("]")
-            }
-            Value::Object(map) => {
-                f.write_str("{")?;
-                for (i, (key, value)) in map.iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(",")?;
-                    }
-                    write_json_string(f, key)?;
-                    f.write_str(":")?;
-                    write!(f, "{value}")?;
-                }
-                f.write_str("}")
-            }
-        }
-    }
-}
-
-fn write_json_string(f: &mut fmt::Formatter<'_>, s: &str) -> fmt::Result {
-    f.write_str("\"")?;
+/// Writes the contents of a string with escapes applied, without the surrounding quotes.
+/// tot's escapes are JSON's, so both emitters share this.
+pub(crate) fn write_escaped(out: &mut String, s: &str) {
     for c in s.chars() {
         match c {
-            '"' => f.write_str("\\\"")?,
-            '\\' => f.write_str("\\\\")?,
-            '\n' => f.write_str("\\n")?,
-            '\r' => f.write_str("\\r")?,
-            '\t' => f.write_str("\\t")?,
-            '\u{8}' => f.write_str("\\b")?,
-            '\u{c}' => f.write_str("\\f")?,
-            c if (c as u32) < 0x20 => write!(f, "\\u{:04x}", c as u32)?,
-            c => write!(f, "{c}")?,
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
         }
     }
-    f.write_str("\"")
 }

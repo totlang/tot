@@ -234,7 +234,7 @@ in order of importance:
 | YAML → tot | lossy | anchors/aliases resolved & inlined; tags, non-string keys, dates, multi-document streams unsupported |
 | tot → YAML | lossless, total | emitted with explicit quoting |
 | TOML → tot | lossy | datetimes become strings (reported on stderr); integers and floats map 1:1 |
-| tot → TOML | lossy | root must be an object; `null` omitted (below) |
+| tot → TOML | lossy | root must be an object; `null` omitted (below); sub-tables hoisted below plain values, since TOML's syntax requires it |
 
 "Mostly compatible" with YAML/TOML in the honest direction: tot's model is the intersection,
 so anything that survives a round trip through tot is portable to all three.
@@ -270,6 +270,7 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
     per line. Write `{a 1 b 2}` if you want the whole document on one line.
   - An empty collection collapses to `{}` / `[]` even if it was written open, unless it
     contains a comment.
+  - Inline collections carry no inner padding: `{a 1}` and `[1 2]`, matching JSON.
 - Converters (`tot from json`, etc.) have no author intent to preserve and emit block form for
   everything except empty collections, which stay `{}` / `[]`.
 - Multi-line strings are re-indented one level inside their member; the value is unchanged.
@@ -281,24 +282,37 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
 - At most one consecutive blank line, preserved. Blank lines are dropped at the start and end
   of a block and of the document.
 
-## CLI sketch
+## CLI
 
 ```
-tot fmt [--check] [FILE...]        # format in place, or exit 1 on diff
-tot check [--strict] [FILE...]     # parse + lint
-tot to <json|yaml|toml> [FILE]     # stdout
-tot from <json|yaml|toml> [FILE]   # stdout
-tot get <path> [FILE]              # later; `address.zip`
+tot fmt [--check] [FILE]...       format in place, or stdin to stdout
+tot check [FILE]...               parse and report errors
+tot to <json|yaml|toml> [FILE]    write this document as another format
+tot from <json|yaml|toml> [FILE]  read another format and write tot
 ```
 
-- Extension `.tot`. Format is inferred from the extension when a file is named; stdin is
-  assumed to be tot, so `tot to json < config.tot` works with no flags.
-- `--null=omit|error` on `tot to toml`, defaulting to `omit`.
+- Extension `.tot`. With no FILE, input is read from stdin.
+- `--check` on `fmt`: write nothing, exit 1 if any file would change.
+- `--compact` on `to json`: one line instead of indented.
+- `--null=omit|error` on `to toml`, defaulting to `omit`.
+- Exit codes: `0` success, `1` a file is unformatted or a document failed to parse, `2`
+  anything else.
+- `from json` has no conversion step. Every JSON document is already valid tot, so it reads
+  the input with the ordinary parser and reformats — the JSON direction needs no code at all,
+  which is goal #2 paying for itself.
+
+Not built yet: `tot check --strict` (warn when a member spans a newline) and
+`tot get <path>`.
 
 ### Implementation notes
 
-- Hand-written lexer + recursive-descent parser, no dependencies. The grammar is small enough
-  that a generator buys nothing and costs error quality.
+- Two crates. `tot` is the library — parser, formatter, JSON output — and has **no
+  dependencies**. `tot-cli` is the binary and carries the only two, a TOML parser and a YAML
+  parser, since those are the formats tot cannot read on its own.
+- Hand-written lexer + recursive-descent parser. The grammar is small enough that a generator
+  buys nothing and costs error quality.
+- A leading byte-order mark is skipped. It is not whitespace, so left alone it would become
+  the first character of the first key.
 - Keep spans on every token so diagnostics can point at the *key* whose value is missing.
 - Integers and floats are separate types, each storing its original lexeme and parsing on
   demand. Integer lexemes are canonical (leading zeros are a parse error) so their equality is

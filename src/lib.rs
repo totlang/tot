@@ -10,7 +10,10 @@
 //!     address { city "sf" zip 94102 }
 //! "#).unwrap();
 //!
-//! assert_eq!(value.to_string(), r#"{"name":"tim","address":{"city":"sf","zip":94102}}"#);
+//! assert_eq!(
+//!     tot::json::to_string(&value),
+//!     r#"{"name":"tim","address":{"city":"sf","zip":94102}}"#
+//! );
 //! ```
 
 mod cst;
@@ -20,7 +23,9 @@ mod lex;
 mod parse;
 mod value;
 
+pub mod json;
+
 pub use error::{Error, Span};
-pub use fmt::format;
+pub use fmt::{format, format_value};
 pub use parse::parse;
 pub use value::{Float, Integer, Map, Value};

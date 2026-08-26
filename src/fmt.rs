@@ -7,6 +7,8 @@
 
 use crate::cst::{self, Body, Collection, Document, Item, Lead, Node};
 use crate::error::Error;
+use crate::lex::is_bareword_char;
+use crate::value::{Value, write_escaped};
 
 /// Format a tot document into its canonical form.
 ///
@@ -182,5 +184,92 @@ impl Printer {
         }
         self.out.push_str(&prefix);
         self.out.push_str("\"\"\"");
+    }
+}
+
+/// Render a [`Value`] as tot.
+///
+/// This is the converters' entry point, and it differs from [`format`] in the one way that
+/// matters: there is no source text, so there is no author intent to preserve. Everything is
+/// written in block form except empty collections.
+///
+/// ```
+/// let value = tot::parse(r#"{"a": [1, 2]}"#).unwrap();
+/// assert_eq!(tot::format_value(&value), "a [\n  1\n  2\n]\n");
+/// ```
+pub fn format_value(value: &Value) -> String {
+    let mut out = String::new();
+    match value {
+        // A root object is written without its braces — the whole point of the language.
+        Value::Object(map) => {
+            for (key, member) in map.iter() {
+                write_member(&mut out, key, member, 0);
+            }
+        }
+        other => {
+            write_value(&mut out, other, 0);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn write_member(out: &mut String, key: &str, value: &Value, level: usize) {
+    write_indent(out, level);
+    write_key(out, key);
+    out.push(' ');
+    write_value(out, value, level);
+    out.push('\n');
+}
+
+fn write_value(out: &mut String, value: &Value, level: usize) {
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(true) => out.push_str("true"),
+        Value::Bool(false) => out.push_str("false"),
+        Value::Integer(i) => out.push_str(i.as_str()),
+        // Both lexemes are valid tot as they stand; only JSON needs `1.` normalized.
+        Value::Float(f) => out.push_str(f.as_str()),
+        Value::String(s) => {
+            out.push('"');
+            write_escaped(out, s);
+            out.push('"');
+        }
+        Value::Array(items) if items.is_empty() => out.push_str("[]"),
+        Value::Array(items) => {
+            out.push_str("[\n");
+            for item in items {
+                write_indent(out, level + 1);
+                write_value(out, item, level + 1);
+                out.push('\n');
+            }
+            write_indent(out, level);
+            out.push(']');
+        }
+        Value::Object(map) if map.is_empty() => out.push_str("{}"),
+        Value::Object(map) => {
+            out.push_str("{\n");
+            for (key, member) in map.iter() {
+                write_member(out, key, member, level + 1);
+            }
+            write_indent(out, level);
+            out.push('}');
+        }
+    }
+}
+
+fn write_key(out: &mut String, key: &str) {
+    if !key.is_empty() && key.chars().all(is_bareword_char) {
+        out.push_str(key);
+    } else {
+        out.push('"');
+        write_escaped(out, key);
+        out.push('"');
+    }
+}
+
+fn write_indent(out: &mut String, level: usize) {
+    for _ in 0..level {
+        out.push_str("  ");
     }
 }

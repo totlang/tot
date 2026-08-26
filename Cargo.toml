@@ -1,6 +1,12 @@
+[workspace]
+members = ["cli"]
+
 [package]
 name = "tot"
 version = "0.1.0"
 edition = "2024"
+description = "JSON with the punctuation removed"
 
+# The library stays dependency-free. The YAML and TOML converters need third-party
+# parsers, so they live in the `tot-cli` crate instead.
 [dependencies]
