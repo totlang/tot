@@ -1,5 +1,6 @@
 //! The `tot` command-line interface.
 
+mod build;
 mod convert;
 
 use std::io::Read;
@@ -14,6 +15,8 @@ USAGE
     tot fmt [--check] [FILE]...   format in place, or stdin to stdout
     tot check [--strict] [--schema=FILE] [FILE]...
                                   parse and report errors
+    tot build [--check] [--out=FILE] [--set=N=V]... FILE
+                                  build a .tott template into a .tot document
     tot merge [--null=…] [FILE]...
                                   fold documents together, left to right
     tot get [--raw] <PATH> [FILE] print the one value at PATH
@@ -28,8 +31,12 @@ one layer of a merge; a file actually named `-` is `./-`.
 
 FLAGS
     --check         fmt: write nothing, and exit 1 if any file would change
+                    build: exit 1 if the built document differs from the one on disk
     --strict        check: also warn when a member's value is not on its key's line
     --schema=FILE   check: also check the shape against the schema in FILE
+    --out=FILE      build: write here instead of stdout
+    --set=N=V       build: set parameter N to the tot value V
+    --set-raw=N=V   build: set parameter N to the string V, spelled literally
     --raw           get: print a string with no quotes and no escapes
                     set: take VALUE as a string, spelled literally
     --create        set: build the objects on the way to PATH if they are missing
@@ -56,6 +63,36 @@ SCHEMA
     with `|`. A `?` on a key makes the member optional; a `*` key covers every
     other key. Without one, a member the schema does not name is an error —
     catching a typo is most of what checking a shape is for.
+
+TEMPLATES
+    A .tott file is tot plus one thing: a `(head arg…)` form, wherever a value
+    goes, evaluated at build time and replaced by its value.
+
+        name     \"example-service\"
+        replicas (if (param \"prod\") 5 1)
+        image    (str \"registry/\" (param \"name\") \":\" (param \"tag\"))
+        regions  (import \"regions.tot\")
+
+    There are four forms and no way to define a fifth:
+
+        (param \"name\")           a build parameter, set with --set
+        (param \"name\" default)   …or default, when it was not set
+        (if cond then else)      cond must be a boolean; tot has no truthiness
+        (str a b …)              joins strings, numbers, and booleans
+        (import \"file\")          that file's value, read relative to this file
+
+    Parens are ordinary characters in .tot and delimiters only in .tott, so no
+    .tot document changes meaning. Since parens never appear in data, anything
+    inside them is computed and anything outside them is not.
+
+    Parameters come from the command line and nowhere else, so a build is a pure
+    function of its inputs. Write --set-raw=env=\"$ENV\" if you want the
+    environment; that puts the dependency in plain sight.
+
+    With no --out the document goes to stdout. --check builds and compares
+    against the document on disk — config.tott against config.tot — so CI can
+    catch one that has drifted from its template, the way fmt --check catches
+    formatting.
 
 MERGE
     Objects merge member by member; anything else is replaced whole. An array
@@ -106,6 +143,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     match command {
         "fmt" => fmt(&args[1..]),
         "check" => check(&args[1..]),
+        "build" => build_command(&args[1..]),
         "merge" => merge(&args[1..]),
         "get" => get(&args[1..]),
         "set" => set(&args[1..]),
@@ -231,6 +269,127 @@ fn check(args: &[String]) -> Result<ExitCode, String> {
     }
 
     Ok(status.into())
+}
+
+/// Builds a `.tott` template into a `.tot` document.
+///
+/// With no `--out`, the document goes to stdout, so a build composes with the rest of the CLI
+/// the way `merge`, `get`, and `set` do. `--check` is the one that earns its keep in CI: it
+/// builds and compares, so a committed document that has drifted from the template it came
+/// from is caught the same way `fmt --check` catches formatting.
+fn build_command(args: &[String]) -> Result<ExitCode, String> {
+    let (flags, positional) = split(args);
+    let mut check_only = false;
+    let mut out: Option<&str> = None;
+    let mut params = tot::Params::new();
+
+    for flag in flags {
+        match flag {
+            "--check" => check_only = true,
+            _ if flag.starts_with("--out=") => out = Some(&flag["--out=".len()..]),
+            _ if flag.starts_with("--set=") => {
+                let (name, text) = pair(&flag["--set=".len()..], "--set")?;
+                // The same spelling `tot set` takes, so a value means one thing across the CLI.
+                let value = tot::parse_value(text)
+                    .map_err(|e| format!("`--set={name}=…`: `{text}` is not a tot value: {e}"))?;
+                params.set(name, value);
+            }
+            _ if flag.starts_with("--set-raw=") => {
+                let (name, text) = pair(&flag["--set-raw=".len()..], "--set-raw")?;
+                params.set(name, tot::Value::String(text.to_string()));
+            }
+            // Each needs its `=` for the reason `--schema` does: bare, the thing after it
+            // would be indistinguishable from the template to build.
+            "--out" | "--set" | "--set-raw" => {
+                return Err(format!("`{flag}` takes its value with an `=`: `{flag}=…`"));
+            }
+            other => return Err(unknown_flag(other)),
+        }
+    }
+
+    let Some(input) = positional.first().copied() else {
+        return Err("`tot build` needs a template, like `config.tott`".to_string());
+    };
+    if positional.len() > 1 {
+        return Err("`tot build` takes one template".to_string());
+    }
+
+    // A template's imports resolve relative to itself, so it needs a name even when it came
+    // from stdin — where the only sensible answer is the directory the build was run from.
+    let from_stdin = input == "-";
+    let name = if from_stdin {
+        "<stdin>".to_string()
+    } else {
+        build::name(std::path::Path::new(input))
+    };
+    let src = read_input(Some(input))?;
+
+    let template = match tot::Template::parse_named(&src, &name) {
+        Ok(template) => template,
+        Err(e) => {
+            eprintln!("tot: in {name}");
+            eprint!("{}", e.render(&src));
+            return Ok(ExitCode::from(1));
+        }
+    };
+    let document = match template.build(&params, &mut build::Files) {
+        Ok(document) => document,
+        Err(e) => {
+            eprint!("tot: {}", e.render());
+            return Ok(ExitCode::from(1));
+        }
+    };
+    let built = tot::format_value(&document);
+
+    let target = match out {
+        Some(path) => Some(std::path::PathBuf::from(path)),
+        None if from_stdin => None,
+        None => build::output_for(input),
+    };
+
+    if !check_only {
+        return match target {
+            Some(path) if out.is_some() => match std::fs::write(&path, &built) {
+                Ok(()) => Ok(ExitCode::SUCCESS),
+                Err(e) => Err(format!("{}: {e}", path.display())),
+            },
+            // Without `--out` the document goes to stdout; the inferred path is only what
+            // `--check` compares against, since writing a file nobody named is a surprise.
+            _ => {
+                print!("{built}");
+                Ok(ExitCode::SUCCESS)
+            }
+        };
+    }
+
+    let Some(path) = target else {
+        return Err(
+            "`tot build --check` needs `--out=FILE` when the template comes from stdin".to_string(),
+        );
+    };
+    let committed =
+        std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if committed == built {
+        return Ok(ExitCode::SUCCESS);
+    }
+    eprintln!(
+        "tot: {} is not what {name} builds — run `tot build --out={} {}`",
+        path.display(),
+        path.display(),
+        input
+    );
+    Ok(ExitCode::from(1))
+}
+
+/// Splits a `name=value` flag argument.
+fn pair<'a>(text: &'a str, flag: &str) -> Result<(&'a str, &'a str), String> {
+    let (name, value) = text
+        .split_once('=')
+        .ok_or_else(|| format!("`{flag}={text}` needs a name and a value: `{flag}=name=value`"))?;
+    if name.is_empty() {
+        return Err(format!("`{flag}={text}` has no parameter name"));
+    }
+    Ok((name, value))
 }
 
 /// Runs the passes that were asked for over one document.

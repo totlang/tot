@@ -315,6 +315,8 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
 tot fmt [--check] [FILE]...       format in place, or stdin to stdout
 tot check [--strict] [--schema=FILE] [FILE]...
                                   parse and report errors
+tot build [--check] [--out=FILE] [--set=N=V]... FILE
+                                  build a .tott template into a .tot document
 tot merge [--null=…] [FILE]...    fold documents together, left to right
 tot get [--raw] <PATH> [FILE]     print the one value at PATH
 tot set <PATH> <VALUE> [FILE]     write VALUE at PATH
@@ -390,6 +392,81 @@ retries "int|null"
 - A violation's location is a **path**, spelled the way `tot get` spells one. Where the
   document has a key to point at, the caret goes there; a member that is missing is reported
   against the object that wanted it, and one missing at the root has nothing to point at.
+
+### Templates
+
+A `.tott` file is a **template**: the data language plus one production — a `(head arg…)`
+**form**, wherever a value goes — which is evaluated at build time and replaced by its value.
+`tot build` turns one into a `.tot` document, and the document is what gets committed and read.
+
+```tott
+name     "example-service"
+replicas (if (param "prod") 5 1)
+image    (str "registry/" (param "name") ":" (param "tag"))
+regions  (import "regions.tot")
+```
+
+**The data language does not change.** `(` and `)` are ordinary bareword characters in `.tot`
+and delimiters only in `.tott`, so no existing document means anything different — `(a) 1` is
+still the key `(a)`, and `@type` and `$ref` are still bare, which is what reserving `@` or `$`
+instead would have cost. Parens were the least bad sigil precisely because **they never appear
+in data**: anything inside them is computed and anything outside them is not, so a reader can
+see the difference without knowing the form set.
+
+The two dialects differ in that one character pair and nothing else. A number, an escape, a
+`"""` string, the duplicate-key rule, and the diagnostic that blames a missing value on its key
+are all the same in both, because they are the same code.
+
+- The forms are `param`, `if`, `str`, and `import`. **There is no way to define a fifth.** A
+  fixed set is the whole discipline: the moment a template can define a function, people write
+  libraries, and a configuration file becomes a program that has to be read as one.
+
+  | | |
+  |---|---|
+  | `(param "name")` | the build parameter `name`, or a failure if it was not set |
+  | `(param "name" default)` | …or `default`, when it was not set |
+  | `(if cond then else)` | `cond` must be a boolean; only the branch taken is evaluated |
+  | `(str a b …)` | joins strings, numbers, and booleans into one string |
+  | `(import "file")` | that file's value |
+
+- **A form goes where a value goes, and only there.** A form may not be a key: a computed key
+  would make the shape of a document depend on evaluating it, and the shape is what a reader
+  most needs to see without running anything. Splicing one document's members into another is
+  `merge`; embedding one value is `import`. Those are different operations and a single syntax
+  made to do both is where these designs go muddy.
+- **A `param`'s name and an `import`'s path are written down, not computed.** Both are static
+  on purpose: it is what lets a reader — and a tool — see which parameters a template needs and
+  which files it pulls in, without running it.
+- **`if` takes a boolean.** tot has no truthiness in a document and does not acquire any in a
+  template. Only the branch taken is evaluated, so the other may import a file this
+  configuration does not have.
+- **`str` joins strings, numbers, and booleans.** A float is written in its normalized form, so
+  `1.` reads as `1.0`. null, arrays, and objects are refused, because any spelling for them
+  would be a guess. A `(str …)` form is preferred to `"${name}"` interpolation for the same
+  reason parens are the sigil: interpolation makes every string potentially computed and forces
+  a reader to scan for it, while a form keeps the computation visibly outside the quotes.
+- **`import` resolves relative to the importing file**, which is the only answer that makes a
+  fragment relocatable. The dialect follows the extension: a `.tott` file is evaluated, and
+  anything else is data — so importing a `.tot` file costs nothing, there being no evaluation
+  to do. The graph must be **acyclic**; a file that imports itself, however indirectly, has no
+  value to be replaced by, and is reported as a cycle with the chain that closed it.
+- **Parameters come from the command line and nowhere else**, so a build is a pure function of
+  its inputs and reproduces anywhere. Reading the environment would be convenient and would let
+  `tot build --check` pass on one machine and fail on another for a reason the source does not
+  show; `--set-raw=env="$ENV"` is how to opt into that with the dependency in plain sight.
+  `--set=N=V` takes a tot value and `--set-raw=N=V` takes a string spelled literally — the same
+  split `set` and `set --raw` use, so a value means one thing across the CLI.
+- With no `--out` the document goes to stdout, so a build composes with the rest of the CLI.
+  `--check` builds and compares against the document on disk, defaulting to the template's own
+  name with the extra `t` removed. That is the real prize: CI verifies that the committed
+  output still matches its source, the way `fmt --check` verifies formatting, and what every
+  consumer reads is still ordinary tot.
+- A failure carries the file it happened in and the chain of imports that reached it, since the
+  span belongs to whichever file the form was written in and not to the one the build started
+  at.
+- **`tot fmt` does not yet format a template.** A `.tott` file has forms in it, which the CST
+  has no node for, so the formatter would have to grow one. Until then `fmt` reads a `.tott`
+  file as data and reports the forms as parse errors.
 
 ### Merge
 
@@ -499,9 +576,10 @@ index   = "[" [0-9]+ "]"
 ## Composition (prospective)
 
 The design deliberation for building larger documents out of smaller ones, kept here so the
-reasoning survives the conversation that produced it. **`tot merge` and `tot set` are built** —
-their rules are normative under [CLI](#cli) above. Everything from *If syntax is still wanted*
-onward is neither implemented nor decided.
+reasoning survives the conversation that produced it. **`merge`, `set`, and the template layer
+are built** — their rules are normative under [CLI](#cli) above, and this section is now the
+record of why they took the shape they did rather than a proposal. What remains undecided is
+marked as such at the end.
 
 The need is real: base configuration plus per-environment overlays, a fragment shared by
 several documents, a value that appears in five places. Every config format grows this
@@ -547,9 +625,10 @@ added a commit earlier for unrelated reasons, turned out to be exactly what both
 With them in hand, the measurement can start: what is still awkward about composing documents
 is now a question with a real answer rather than a guess.
 
-### If syntax is still wanted: forms
+### Syntax was still wanted: forms
 
-A `(head arg…)` form, evaluated at build time and replaced by its value.
+**Built** — see [Templates](#templates) for the rules. A `(head arg…)` form, evaluated at build
+time and replaced by its value.
 
 ```tot
 replicas (if prod 5 1)
@@ -583,18 +662,36 @@ total and terminating, no effects but `import` — which is resolved at build ti
 acyclic.
 
 This is the whole discipline. The moment `defn` exists, people write libraries, and a
-configuration file becomes a program that has to be read as a program. Roughly six forms is
+configuration file becomes a program that has to be read as a program. Roughly six forms was
 the target — `import`, `str`, `if`, `get`, `param`, `map` — and a seventh should be a
 deliberate decision, not a convenience.
 
+**Four were built**: `param`, `if`, `str`, `import`. Those four make a usable layer — `if` has
+nothing to branch on without `param`, `str` with `param` is what replaces interpolation, and
+`import` is the composition primitive. The other two were left out rather than guessed at, for
+the same reason enumerations were:
+
+- **`map`** needs a way to write a function in a language whose first constraint is that it has
+  none. `(map <form-with-a-hole> list)` needs a placeholder convention, and inventing one under
+  implementation pressure is how a fixed form set stops being fixed.
+- **`get`** needs a decision about what it reads from. Reaching into an imported value is one
+  thing; reaching into the document being built is another, and the second makes a template's
+  meaning depend on evaluation order.
+
+Whether either is wanted is now measurable, the same way `merge` was the measurement for
+whether forms were wanted at all.
+
 ### Two file types
 
-Forms live in a template file that builds to tot:
+**Built.** Forms live in a template file that builds to tot:
 
 ```
-tot build config.tott -o config.tot
+tot build --out=config.tot config.tott
 tot build --check config.tott
 ```
+
+The flags take their values with an `=` for the reason `--schema` does: bare, the thing after
+one would be indistinguishable from the template to build.
 
 `--check` is the real prize: CI verifies the committed output still matches its source, the
 way `fmt --check` verifies formatting. It also keeps every design goal above intact, because
@@ -616,16 +713,27 @@ described by one type, so it cannot also mean a choice between two literals, and
 (`{enum […]}`) collides with an object schema that happens to have a member called `enum`.
 Left out rather than guessed at.
 
-### Undecided within the above
+### Decided, and how
+
+- **A template file is a distinct extension**, `.tott`, not a `.tot` file with a marker. An
+  extension is honest, and it is also what lets the dialect be decided before a byte is lexed —
+  which is what keeps `(a) 1` the key `(a)` in every `.tot` file that already exists.
+- **`param` reads from `--set` and nothing else.** A build is a pure function of its command
+  line. The environment is convenient and would make `--check` machine-dependent, which is the
+  one property that check exists to provide.
+- **`import` resolves relative to the importing file**, the only answer that makes a fragment
+  relocatable.
+
+### Still undecided
 
 - Whether `merge` needs `--at <path>` for merging a fragment somewhere other than the root, or
   whether `set` plus a shell pipeline covers it.
-- Whether `param` reads from `--set name=value`, the environment, or both. The environment is
-  convenient and makes a build unreproducible.
-- Whether a template file is a distinct extension or a `.tot` file with a marker. An extension
-  is honest; a marker is fewer file types to explain.
-- Whether `import` resolves relative to the importing file or the invocation. Relative to the
-  file is the only answer that makes a fragment relocatable.
+- Whether `map` and `get` are wanted, and if so how `map` writes a function in a language that
+  has none. See above.
+- Whether `tot fmt` should format a template. It cannot today: the CST has no node for a form.
+  The question is not whether it is possible but whether a canonical form for a template is
+  worth a second emitter — the argument for it is that `fmt --check` is how this project keeps
+  every other file honest.
 
 ## Open questions
 

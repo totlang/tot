@@ -1,16 +1,16 @@
 use crate::error::{Error, Span};
-use crate::lex::{Token, TokenKind, tokenize};
+use crate::lex::{Dialect, Token, TokenKind, tokenize};
 use crate::value::{Float, Integer, Map, Value};
 
 /// Recursion limit, so that pathological nesting is a diagnostic rather than a stack overflow.
-const MAX_DEPTH: usize = 128;
+pub(crate) const MAX_DEPTH: usize = 128;
 
 /// Parse a tot document.
 ///
 /// The top level is an object body with the braces left off, unless the entire input is a
 /// single value — which is what lets JSON documents with a scalar or array root parse.
 pub fn parse(src: &str) -> Result<Value, Error> {
-    from_tokens(src, &tokenize(src)?)
+    from_tokens(src, &tokenize(src, Dialect::Data)?)
 }
 
 /// Parse text that sits where a value goes — a command-line argument, a field in another
@@ -27,7 +27,7 @@ pub fn parse(src: &str) -> Result<Value, Error> {
 /// assert!(tot::parse_value("svc").unwrap_err().message.contains("must be quoted"));
 /// ```
 pub fn parse_value(src: &str) -> Result<Value, Error> {
-    Parser::new(src, &tokenize(src)?, Context::Value).document()
+    Parser::new(src, &tokenize(src, Dialect::Data)?, Context::Value).document()
 }
 
 /// Parses an already-tokenized document, for callers that walk the same tokens twice.
@@ -90,14 +90,9 @@ impl<'a, 't> Parser<'a, 't> {
                 TokenKind::Str(s) => Ok(Value::String(s.clone())),
                 TokenKind::Bareword => match literal(self.text(span)) {
                     Some(value) => Ok(value),
-                    // Blame the key only where there could be one. A number-shaped lexeme
-                    // that produced no value is out of range either way.
-                    None if self.context == Context::Value
-                        || number_lexeme(self.text(span)).is_some() =>
-                    {
-                        Err(bad_value(span, self.text(span)))
-                    }
-                    None => Err(missing_value(span, self.text(span))),
+                    // Blame the key only where there could be one.
+                    None if self.context == Context::Value => Err(bad_value(span, self.text(span))),
+                    None => Err(lone_bareword(span, self.text(span))),
                 },
                 kind => Err(Error::new(span, format!("unexpected {}", kind.describe()))),
             };
@@ -233,12 +228,26 @@ impl<'a, 't> Parser<'a, 't> {
     }
 }
 
-fn missing_value(span: Span, key: &str) -> Error {
+/// The diagnostic for a bareword that is the whole of a file and is not a value.
+///
+/// In a file a lone bareword is most likely a key whose value was forgotten, so that is what it
+/// is reported as. A number-shaped lexeme is the exception: it produced no value because it is
+/// out of range, which is the same mistake in either position. Shared with the template parser,
+/// since a `.tott` file is a file too.
+pub(crate) fn lone_bareword(span: Span, text: &str) -> Error {
+    if number_lexeme(text).is_some() {
+        bad_value(span, text)
+    } else {
+        missing_value(span, text)
+    }
+}
+
+pub(crate) fn missing_value(span: Span, key: &str) -> Error {
     Error::new(span, format!("key `{key}` has no value"))
         .with_help("every key must be followed by a value")
 }
 
-fn bad_value(span: Span, text: &str) -> Error {
+pub(crate) fn bad_value(span: Span, text: &str) -> Error {
     // Grammatically a number, so the only way it reached here is by being out of range.
     if matches!(number_lexeme(text), Some(Value::Float(_))) {
         return Error::new(span, format!("`{text}` is outside the range of a float")).with_help(
@@ -257,7 +266,12 @@ fn bad_value(span: Span, text: &str) -> Error {
     }
 }
 
-fn literal(text: &str) -> Option<Value> {
+/// A bareword that is a value: `true`, `false`, `null`, or a number.
+///
+/// Shared with the template parser, so a number means the same thing in a `.tott` file as in a
+/// `.tot` one — the two dialects differ in exactly one character pair, and this is what keeps
+/// that true of the grammar below the tokens as well.
+pub(crate) fn literal(text: &str) -> Option<Value> {
     match text {
         "true" => Some(Value::Bool(true)),
         "false" => Some(Value::Bool(false)),

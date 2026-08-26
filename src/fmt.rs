@@ -7,7 +7,7 @@
 
 use crate::cst::{self, Body, Collection, Document, Item, Lead, Node};
 use crate::error::Error;
-use crate::lex::can_be_bare;
+use crate::lex::{Dialect, can_be_bare};
 use crate::value::{Value, write_escaped};
 use std::fmt::Write as _;
 
@@ -20,7 +20,7 @@ use std::fmt::Write as _;
 pub fn format(src: &str) -> Result<String, Error> {
     // Validate first, so the tree walk below can assume a well-formed document. Both walks
     // read the same tokens, so the source is lexed once.
-    let tokens = crate::lex::tokenize(src)?;
+    let tokens = crate::lex::tokenize(src, Dialect::Data)?;
     crate::parse::from_tokens(src, &tokens)?;
 
     let document = cst::from_tokens(src, &tokens)?;

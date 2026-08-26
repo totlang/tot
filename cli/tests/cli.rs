@@ -295,6 +295,245 @@ fn the_example_config_matches_its_schema() {
     assert_eq!(out.code, 0, "{}", out.stderr);
 }
 
+// --- build --------------------------------------------------------------------------------
+
+/// The workspace root, for reaching the committed examples.
+fn root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the workspace root")
+        .to_path_buf()
+}
+
+const TEMPLATE: &str = "\
+name \"svc\"
+replicas (if (param \"prod\") 5 1)
+image (str \"reg/\" (param \"name\" \"svc\") \":\" (param \"tag\"))
+";
+
+#[test]
+fn build_writes_the_document_to_stdout() {
+    let dir = TempDir::new("build");
+    let template = dir.file("config.tott");
+    std::fs::write(&template, TEMPLATE).expect("write");
+
+    let out = run(
+        &[
+            "build",
+            "--set=prod=true",
+            "--set-raw=tag=v1",
+            arg(&template),
+        ],
+        "",
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.stdout,
+        "name \"svc\"\nreplicas 5\nimage \"reg/svc:v1\"\n"
+    );
+
+    // The output is an ordinary document, so it goes straight back into the CLI.
+    assert_eq!(
+        json(&out.stdout),
+        "{\"name\":\"svc\",\"replicas\":5,\"image\":\"reg/svc:v1\"}\n"
+    );
+}
+
+/// `--set` takes a tot value and `--set-raw` takes a string, the same split `tot set` uses —
+/// so a value means one thing across the whole CLI.
+#[test]
+fn build_parameters_are_values_unless_raw() {
+    let dir = TempDir::new("build-params");
+    let template = dir.file("c.tott");
+    std::fs::write(&template, "a (param \"x\")\n").expect("write");
+    let build = |flag: &str| run(&["build", flag, arg(&template)], "").stdout;
+
+    assert_eq!(build("--set=x=1"), "a 1\n");
+    assert_eq!(build("--set=x=true"), "a true\n");
+    assert_eq!(build("--set=x=[1 2]"), "a [\n  1\n  2\n]\n");
+    assert_eq!(build("--set-raw=x=1"), "a \"1\"\n");
+    assert_eq!(build("--set-raw=x=prod"), "a \"prod\"\n");
+
+    // A bare string is the same parse error it would be anywhere else.
+    let out = run(&["build", "--set=x=prod", arg(&template)], "");
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr.contains("string values must be quoted"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn build_out_writes_a_file_and_check_compares_it() {
+    let dir = TempDir::new("build-check");
+    let template = dir.file("c.tott");
+    let document = dir.file("c.tot");
+    std::fs::write(&template, TEMPLATE).expect("write");
+    let params = ["--set=prod=true", "--set-raw=tag=v1"];
+
+    let out = run(
+        &[
+            "build",
+            params[0],
+            params[1],
+            &format!("--out={}", arg(&document)),
+            arg(&template),
+        ],
+        "",
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(out.stdout.is_empty(), "--out writes the file, not stdout");
+
+    // `--check` infers the same path from the template's name.
+    let out = run(
+        &["build", params[0], params[1], "--check", arg(&template)],
+        "",
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr);
+
+    // A parameter that changes the output is a drift `--check` has to catch.
+    let out = run(
+        &[
+            "build",
+            "--set=prod=false",
+            params[1],
+            "--check",
+            arg(&template),
+        ],
+        "",
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("is not what"), "{}", out.stderr);
+}
+
+/// A missing parameter is the build failing, not a guess.
+#[test]
+fn build_reports_a_missing_parameter_with_a_caret() {
+    let dir = TempDir::new("build-missing");
+    let template = dir.file("c.tott");
+    std::fs::write(&template, TEMPLATE).expect("write");
+
+    let out = run(&["build", "--set=prod=true", arg(&template)], "");
+    assert_eq!(out.code, 1);
+    assert!(out.stdout.is_empty(), "{}", out.stdout);
+    assert!(
+        out.stderr.contains("no value for parameter `tag`"),
+        "{}",
+        out.stderr
+    );
+    assert!(out.stderr.contains("^^^^"), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("the parameters set are prod"),
+        "{}",
+        out.stderr
+    );
+}
+
+/// Imports resolve relative to the file doing the importing, so a directory of templates keeps
+/// working wherever it is and whatever directory the build runs from.
+#[test]
+fn build_imports_relative_to_the_importing_file() {
+    let dir = TempDir::new("build-import");
+    std::fs::create_dir_all(dir.file("parts")).expect("mkdir");
+    std::fs::write(dir.file("parts/regions.tot"), "[\"us\" \"eu\"]\n").expect("write");
+    std::fs::write(
+        dir.file("parts/inner.tott"),
+        "regions (import \"regions.tot\")\n",
+    )
+    .expect("write");
+    let template = dir.file("top.tott");
+    std::fs::write(&template, "block (import \"parts/inner.tott\")\n").expect("write");
+
+    // Run from somewhere else entirely, to prove the paths are not relative to the invocation.
+    let out = run_in(Some(&root()), &["build", arg(&template)], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        json(&out.stdout),
+        "{\"block\":{\"regions\":[\"us\",\"eu\"]}}\n"
+    );
+}
+
+/// A file that imports itself, however indirectly, has no value to be replaced by.
+#[test]
+fn build_refuses_an_import_cycle() {
+    let dir = TempDir::new("build-cycle");
+    std::fs::write(dir.file("a.tott"), "x (import \"b.tott\")\n").expect("write");
+    std::fs::write(dir.file("b.tott"), "y (import \"a.tott\")\n").expect("write");
+
+    let out = run(&["build", arg(&dir.file("a.tott"))], "");
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("is a cycle"), "{}", out.stderr);
+    assert!(out.stderr.contains("a.tott"), "{}", out.stderr);
+}
+
+/// A failure inside an imported file is reported in that file, with the chain that reached it.
+#[test]
+fn build_reports_a_failure_in_the_file_it_happened_in() {
+    let dir = TempDir::new("build-chain");
+    std::fs::write(dir.file("top.tott"), "a (import \"leaf.tott\")\n").expect("write");
+    std::fs::write(dir.file("leaf.tott"), "b 1\nc (str null)\n").expect("write");
+
+    let out = run(&["build", arg(&dir.file("top.tott"))], "");
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("in "), "{}", out.stderr);
+    assert!(out.stderr.contains("leaf.tott"), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("`str` has no spelling for null"),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("imported from"),
+        "the chain: {}",
+        out.stderr
+    );
+}
+
+/// The committed example must still be what its template builds — which is the whole point of
+/// `--check`, tested on the pair the repository ships.
+#[test]
+fn the_example_template_still_builds_its_document() {
+    let out = run_in(
+        Some(&root()),
+        &[
+            "build",
+            "--set=prod=true",
+            "--set-raw=tag=v1.4.2",
+            "--check",
+            "examples/service.tott",
+        ],
+        "",
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr);
+
+    // And what it builds is canonical tot, not merely parseable tot.
+    let out = run_in(
+        Some(&root()),
+        &["fmt", "--check", "examples/service.tot"],
+        "",
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr);
+}
+
+#[test]
+fn build_needs_a_template_and_takes_only_one() {
+    let out = run(&["build"], "");
+    assert_eq!(out.code, 2);
+    assert!(out.stderr.contains("needs a template"), "{}", out.stderr);
+
+    let out = run(&["build", "a.tott", "b.tott"], "");
+    assert_eq!(out.code, 2);
+    assert!(out.stderr.contains("takes one template"), "{}", out.stderr);
+
+    // Each value-taking flag needs its `=`, for the reason `--schema` does.
+    for flag in ["--out", "--set", "--set-raw"] {
+        let out = run(&["build", flag, "x.tot", "c.tott"], "");
+        assert_eq!(out.code, 2, "{flag}");
+        assert!(out.stderr.contains("with an `=`"), "{}", out.stderr);
+    }
+}
+
 // --- merge --------------------------------------------------------------------------------
 
 #[test]

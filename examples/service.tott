@@ -1,0 +1,26 @@
+# A tot template. Everything here is ordinary tot except the `(head arg…)` forms, which are
+# evaluated at build time and replaced by their value:
+#
+#   tot build --set=prod=true --set-raw=tag=v1.4.2 --out=examples/service.tot examples/service.tott
+#
+# `tot build --check` verifies that examples/service.tot is still what this builds.
+
+name "example-service"
+
+# A parameter with no default is required, so a build that forgets one fails instead of
+# guessing. `--set-raw=tag=v1.4.2` sets it; `--set=tag=…` would want the quotes.
+image (str "registry.example/example-service:" (param "tag"))
+
+# `if` takes a boolean. tot has no truthiness in a template any more than in a document, so
+# the condition has to be one — here a parameter that defaults to false.
+replicas (if (param "prod" false) 5 1)
+debug (if (param "prod" false) false true)
+
+listen {
+  host "0.0.0.0"
+  port (param "port" 8080)
+}
+
+# `import` embeds one value, resolved relative to this file so the pair can be moved together.
+# Splicing one document's members into another is `tot merge`, which is a different operation.
+regions (import "regions.tot")

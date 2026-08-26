@@ -72,6 +72,7 @@ package, or use `--workspace`.
 |---|---|
 | `tot fmt [--check] [FILE]...` | format in place; `--check` writes nothing and exits 1 on a diff |
 | `tot check [--strict] [--schema=F] [FILE]...` | parse and report diagnostics |
+| `tot build [--check] [--out=F] [--set=N=V]... FILE` | build a `.tott` template into a document |
 | `tot merge [FILE]...` | fold documents together, left to right |
 | `tot get [--raw] <PATH> [FILE]` | print the one value at PATH |
 | `tot set <PATH> <VALUE> [FILE]` | write VALUE at PATH and print the document |
@@ -122,6 +123,68 @@ Every violation is reported, not just the first, and each one names a `tot get` 
 a caret at the key. A typo gives you two — the name that's missing and the name that isn't
 known — because either alone sends you to the wrong place. No enumerations yet; the spec says
 why.
+
+### Templates
+
+A `.tott` file is tot plus one thing: a `(head arg…)` **form**, wherever a value goes,
+evaluated at build time and replaced by its value. `tot build` turns one into a `.tot`
+document, and the document is what you commit and everything else reads.
+
+```tott
+name     "example-service"
+replicas (if (param "prod") 5 1)
+image    (str "registry/" (param "name") ":" (param "tag"))
+regions  (import "regions.tot")
+```
+
+```bash
+tot build --set=prod=true --set-raw=tag=v1.4.2 --out=config.tot config.tott
+```
+
+**The data language doesn't change.** Parens are ordinary bareword characters in `.tot` and
+delimiters only in `.tott`, so `(a) 1` is still the key `(a)` and `@type` / `$ref` are still
+bare — which is exactly what reserving `@` or `$` would have cost, and those are JSON-LD and
+JSON Schema, the documents `from json` exists to read. Parens won because **they never appear
+in data**: what's inside them is computed, what's outside isn't, and you can see which without
+knowing the form set.
+
+There are four forms and **no way to define a fifth**:
+
+| | |
+|---|---|
+| `(param "name")` | a build parameter, or a failure if it wasn't set |
+| `(param "name" default)` | …or `default`, when it wasn't set |
+| `(if cond then else)` | `cond` must be a boolean; only the branch taken is evaluated |
+| `(str a b …)` | joins strings, numbers, and booleans |
+| `(import "file")` | that file's value, resolved relative to the importing file |
+
+The fixed set is the whole discipline — the moment a template can define a function, people
+write libraries and a config file becomes a program you have to read as one. `map` and `get`
+are deliberately absent; [the spec](SPEC.md#the-constraint-that-has-to-be-designed-in-first)
+says what each would need decided first.
+
+Things worth knowing:
+
+- **A form goes where a value goes, and only there.** A computed key would make a document's
+  shape depend on evaluating it. Splicing one document's members into another is `merge`;
+  embedding one value is `import`.
+- **A `param` name and an `import` path are written down, not computed**, so you can see what a
+  template needs and what it pulls in without running it.
+- **`if` takes a boolean** — no truthiness here either. The branch not taken isn't evaluated,
+  so it can import a file this configuration doesn't have.
+- **Parameters come from the command line and nowhere else**, so a build reproduces anywhere.
+  `--set=N=V` takes a tot value, `--set-raw=N=V` takes a literal string — the same split as
+  `set` / `set --raw`. Want the environment? `--set-raw=env="$ENV"` puts it in plain sight.
+- **`--check` is the one that earns its keep**: it builds and compares against the document on
+  disk (`config.tott` → `config.tot`), so CI catches a committed document that's drifted from
+  its template, the way `fmt --check` catches formatting.
+- Imports must be **acyclic**, and a failure names the file it happened in plus the chain that
+  reached it.
+- **`tot fmt` doesn't format templates yet.** The CST has no node for a form, so `fmt` reads a
+  `.tott` file as data and reports the forms as parse errors.
+
+[examples/service.tott](examples/service.tott) builds
+[examples/service.tot](examples/service.tot), and a test keeps them in step.
 
 `merge` is base-plus-overlays:
 
@@ -211,7 +274,13 @@ let warns = tot::lint(src)?;                      // -> Vec<Warning>, all legal-
 let bad   = tot::Schema::parse(shape)?.check(src)?;    // -> Vec<Violation>
 let at    = tot::Path::parse("a.b[0]")?.get(&value)?;
 let v     = tot::parse_value(arg)?;               // text in a value position, not a file
+let doc   = tot::Template::parse(tott)?.evaluate(&params)?;   // or .build(&params, &mut imports)
 ```
+
+`Template` keeps its own source and name, so a failure three imports deep still draws its caret
+in the right file. The library does no I/O — `(import …)` goes through an `Imports` trait, so a
+build can be driven from the filesystem, an archive, or a map in a test without any of them
+being special.
 
 `parse_value` uses the same grammar as `parse`; the difference is the diagnostic. A lone
 bareword in a file is most likely a key that lost its value and is reported that way, but as a
@@ -287,6 +356,7 @@ src/                tot — library, zero dependencies
   fmt.rs            formatter (over the CST) + Value -> tot emitter
   lint.rs           opt-in checks (over the CST); nothing here is a language rule
   merge.rs          folding documents together, left to right
+  template.rs       `.tott`: the data grammar plus forms, and the evaluator
   path.rs           `a.b[0]` paths — a CLI convenience, not part of the language
   schema.rs         checking a document's shape against a schema written in tot
   json.rs           JSON output only
@@ -294,6 +364,7 @@ src/                tot — library, zero dependencies
   value.rs          Value, Integer, Float, Map
   error.rs          Span, Error, shared caret rendering
 cli/                tot-cli — binary `tot`; deps: toml, yaml_serde
+  build.rs          resolving `(import …)` against the filesystem
 ```
 
 `parse` and `format` are separate walks over the same token stream. `format` validates with
@@ -316,7 +387,16 @@ formatting preserves the parsed value, and formatting is idempotent.
 
 ## Next
 
-`tot merge`, `tot set`, and schema validation are built. Still open, in rough order:
+`tot merge`, `tot set`, schema validation, and the `.tott` template layer are built. Still open,
+in rough order:
+
+- **`tot fmt` for templates.** The CST has no node for a form, so `fmt` currently reads a
+  `.tott` file as data and reports its forms as parse errors. Everything else in this project
+  is kept honest by `fmt --check`; templates aren't yet.
+- **`map` and `get` forms.** Deliberately absent — `map` needs a way to write a function in a
+  language whose first constraint is that it has none, and `get` needs a decision about what it
+  reads from. `merge` was the measurement for whether forms were wanted at all; these two now
+  get the same treatment.
 
 - **Enumerations in schemas.** The most obvious missing check, with no good spelling yet —
   `["debug" "info"]` already means an array of one element type, so it can't also mean a choice

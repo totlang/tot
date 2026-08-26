@@ -1,0 +1,12 @@
+name "example-service"
+image "registry.example/example-service:v1.4.2"
+replicas 5
+debug false
+listen {
+  host "0.0.0.0"
+  port 8080
+}
+regions [
+  "us-west-2"
+  "eu-central-1"
+]

@@ -5,6 +5,7 @@ use std::fmt;
 
 use crate::cst::{self, Body, Item, Node};
 use crate::error::{self, Error, Span};
+use crate::lex::Dialect;
 
 /// Something legal but worth a second look.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,7 +64,7 @@ impl fmt::Display for Warning {
 pub fn lint(src: &str) -> Result<Vec<Warning>, Error> {
     // Validate first, so the tree walk below can assume a well-formed document. Both walks
     // read the same tokens, so the source is lexed once.
-    let tokens = crate::lex::tokenize(src)?;
+    let tokens = crate::lex::tokenize(src, Dialect::Data)?;
     crate::parse::from_tokens(src, &tokens)?;
 
     let document = cst::from_tokens(src, &tokens)?;

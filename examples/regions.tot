@@ -1,0 +1,3 @@
+# An ordinary tot document. Nothing marks it as importable — a fragment is just a document,
+# and `(import "regions.tot")` embeds the value it denotes.
+["us-west-2" "eu-central-1"]

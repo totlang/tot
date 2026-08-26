@@ -20,7 +20,7 @@
 //! ```
 
 use crate::error::{Error, Span};
-use crate::lex::{can_be_bare, is_bareword_char, unescape_at};
+use crate::lex::{Dialect, can_be_bare, unescape_at};
 use crate::value::{Map, Value, write_escaped};
 
 /// One step of a path.
@@ -383,7 +383,9 @@ pub(crate) fn kind(value: &Value) -> &'static str {
 /// A bare path segment takes any character a bare key takes, except the `.` that separates
 /// segments. Sharing the predicate keeps the two spellings of a key from drifting apart.
 fn is_segment_char(c: char) -> bool {
-    is_bareword_char(c) && c != '.'
+    // A path names a value inside a `.tot` document, so it spells keys the way `.tot` does:
+    // a paren is an ordinary character here even when the document was built from a template.
+    Dialect::Data.allows_bare(c) && c != '.'
 }
 
 struct Parser<'a> {

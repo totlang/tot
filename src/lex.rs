@@ -6,6 +6,10 @@ pub(crate) enum TokenKind {
     RBrace,
     LBracket,
     RBracket,
+    /// `(`, in a template only. In `.tot` this is an ordinary bareword character.
+    LParen,
+    /// `)`, in a template only.
+    RParen,
     /// An unquoted run of non-delimiter characters. The text is `src[span]`.
     Bareword,
     /// A quoted string, already unescaped.
@@ -19,8 +23,37 @@ impl TokenKind {
             TokenKind::RBrace => "`}`",
             TokenKind::LBracket => "`[`",
             TokenKind::RBracket => "`]`",
+            TokenKind::LParen => "`(`",
+            TokenKind::RParen => "`)`",
             TokenKind::Bareword => "a bareword",
             TokenKind::Str(_) => "a string",
+        }
+    }
+}
+
+/// Which language the text is written in.
+///
+/// The two share a lexer and differ in exactly one character pair. `(` and `)` are ordinary
+/// bareword characters in `.tot` — `(a) 1` is the key `(a)` — and reserving them there would
+/// break documents that already parse. In `.tott` they open and close a form, which is what
+/// makes computation visible: parens never appear in data, so anything inside them is being
+/// evaluated and anything outside them is not.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Dialect {
+    /// `.tot` — data. No forms; every JSON document is one of these.
+    #[default]
+    Data,
+    /// `.tott` — a template, which evaluates to data.
+    Template,
+}
+
+impl Dialect {
+    /// Whether `c` may appear in a bareword.
+    pub(crate) fn allows_bare(self, c: char) -> bool {
+        match c {
+            ',' | ':' | '"' | '{' | '}' | '[' | ']' | '#' | '=' => false,
+            '(' | ')' => self == Dialect::Data,
+            c => !c.is_whitespace(),
         }
     }
 }
@@ -31,26 +64,32 @@ pub(crate) struct Token {
     pub span: Span,
 }
 
-pub(crate) fn tokenize(src: &str) -> Result<Vec<Token>, Error> {
-    Lexer { src, pos: 0 }.run()
-}
-
 /// `,` `:` and whitespace separate tokens; `#` introduces a comment; `=` is reserved so that
 /// `key = value` gets a real diagnostic instead of a confusing one.
-pub(crate) fn is_bareword_char(c: char) -> bool {
-    !matches!(c, ',' | ':' | '"' | '{' | '}' | '[' | ']' | '#' | '=') && !c.is_whitespace()
+pub(crate) fn tokenize(src: &str, dialect: Dialect) -> Result<Vec<Token>, Error> {
+    Lexer {
+        src,
+        pos: 0,
+        dialect,
+    }
+    .run()
 }
 
-/// Whether a key can be written without quotes. Keys are always strings, so this asks only
-/// whether every character survives being unquoted. Both emitters go through here so they
-/// cannot drift apart on which keys need quoting.
+/// Whether a key can be written without quotes **in `.tot`**. Keys are always strings, so this
+/// asks only whether every character survives being unquoted. Both emitters go through here so
+/// they cannot drift apart on which keys need quoting.
+///
+/// A template emitter would have to ask [`Dialect::Template`] instead, since a key holding a
+/// paren is bare in one dialect and quoted in the other. There is no template emitter yet —
+/// `tot build` writes `.tot`, which is what this answers for.
 pub(crate) fn can_be_bare(key: &str) -> bool {
-    !key.is_empty() && key.chars().all(is_bareword_char)
+    !key.is_empty() && key.chars().all(|c| Dialect::Data.allows_bare(c))
 }
 
 struct Lexer<'a> {
     src: &'a str,
     pos: usize,
+    dialect: Dialect,
 }
 
 impl<'a> Lexer<'a> {
@@ -84,6 +123,16 @@ impl<'a> Lexer<'a> {
                     TokenKind::RBracket
                 }
                 '"' => self.lex_string()?,
+                // In `.tot` these fall through to the bareword arm, which is what keeps
+                // `(a) 1` the key `(a)` there.
+                '(' if self.dialect == Dialect::Template => {
+                    self.pos += 1;
+                    TokenKind::LParen
+                }
+                ')' if self.dialect == Dialect::Template => {
+                    self.pos += 1;
+                    TokenKind::RParen
+                }
                 '=' => {
                     self.pos += 1;
                     return Err(Error::new(
@@ -94,7 +143,7 @@ impl<'a> Lexer<'a> {
                 }
                 _ => {
                     while let Some(c) = self.peek() {
-                        if !is_bareword_char(c) {
+                        if !self.dialect.allows_bare(c) {
                             break;
                         }
                         self.pos += c.len_utf8();

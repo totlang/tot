@@ -39,7 +39,7 @@ use std::fmt;
 
 use crate::cst::{self, Body, Item, Node};
 use crate::error::{Error, Span};
-use crate::lex::Token;
+use crate::lex::{Dialect, Token};
 use crate::path::{as_segment, kind};
 use crate::value::{Map, Value};
 
@@ -113,7 +113,7 @@ impl Schema {
     /// second kind carries the span of the key it went wrong at, so both read the same.
     pub fn parse(src: &str) -> Result<Self, Error> {
         // Both walks read the same tokens, so the source is lexed once.
-        let tokens = crate::lex::tokenize(src)?;
+        let tokens = crate::lex::tokenize(src, Dialect::Data)?;
         let value = crate::parse::from_tokens(src, &tokens)?;
         Type::compile(&value, "")
             .map(|root| Schema { root })
@@ -137,7 +137,7 @@ impl Schema {
     /// single pass into a guessing game.
     pub fn check(&self, src: &str) -> Result<Vec<Violation>, Error> {
         // Both walks read the same tokens, so the source is lexed once.
-        let tokens = crate::lex::tokenize(src)?;
+        let tokens = crate::lex::tokenize(src, Dialect::Data)?;
         let document = crate::parse::from_tokens(src, &tokens)?;
         let mut violations = self.check_value(&document);
         if !violations.is_empty() {
