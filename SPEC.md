@@ -615,7 +615,10 @@ index   = "[" [0-9]+ "]"
 - Hand-written lexer + recursive-descent parser. The grammar is small enough that a generator
   buys nothing and costs error quality.
 - A leading byte-order mark is skipped. It is not whitespace, so left alone it would become
-  the first character of the first key.
+  the first character of the first key. Only a *leading* one: `U+FEFF` is not whitespace in
+  Unicode either, so anywhere else it is an ordinary bareword character. Diagnostics skip it
+  too — a mark the lexer ignored occupies no column, and renders as nothing at all, so counting
+  it would put every caret on the first line one place to the right of what it points at.
 - Keep spans on every token so diagnostics can point at the *key* whose value is missing.
 - Integers and floats are separate types, each storing its original lexeme and parsing on
   demand. Integer lexemes are canonical (leading zeros are a parse error) so their equality is

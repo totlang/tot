@@ -91,13 +91,29 @@ struct Lexer<'a> {
     dialect: Dialect,
 }
 
+/// The byte offset a document's text begins at.
+///
+/// A leading byte-order mark is not part of it. The mark is not whitespace, so left alone it
+/// would silently become the first character of the first key — and editors write them, so it
+/// is skipped rather than reported.
+///
+/// Diagnostics ask for this too, and have to: a mark the lexer ignored must not occupy a column
+/// either. It renders as nothing at all, so counting it would put every caret on the first line
+/// one place to the right of what it points at. Only a mark that *leads* the file is skipped;
+/// `U+FEFF` is not whitespace in Unicode, so anywhere else it is an ordinary bareword character.
+pub(crate) fn body_start(src: &str) -> usize {
+    if src.starts_with(BOM) {
+        BOM.len_utf8()
+    } else {
+        0
+    }
+}
+
+pub(crate) const BOM: char = '\u{feff}';
+
 impl<'a> Lexer<'a> {
     fn run(mut self) -> Result<Vec<Token>, Error> {
-        // A byte-order mark is not whitespace, so left alone it would silently become the
-        // first character of the first key. Editors write them; skip one.
-        if self.src.starts_with('\u{feff}') {
-            self.pos += '\u{feff}'.len_utf8();
-        }
+        self.pos = body_start(self.src);
 
         let mut tokens = Vec::new();
         loop {

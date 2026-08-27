@@ -104,6 +104,34 @@ fn a_leading_byte_order_mark_is_skipped() {
     assert_eq!(j("\u{feff}a 1"), r#"{"a":1}"#);
 }
 
+/// It is skipped for diagnostics too, and has to be: a mark that renders as nothing at all must
+/// not occupy a column, or every caret on the first line lands one place to the right of what
+/// it points at.
+#[test]
+fn a_byte_order_mark_takes_up_no_column() {
+    let marked = "\u{feff}kind curly\n";
+    let plain = "kind curly\n";
+    let (marked_error, plain_error) = (
+        tot::parse(marked).unwrap_err(),
+        tot::parse(plain).unwrap_err(),
+    );
+
+    assert_eq!(marked_error.line_col(marked), (1, 6));
+    assert_eq!(plain_error.line_col(plain), (1, 6));
+
+    // The strongest statement of it: the same document with and without the mark renders the
+    // same diagnostic, which holds only if the mark is off the printed line as well as out of
+    // the count.
+    let rendered = marked_error.render(marked);
+    assert_eq!(rendered, plain_error.render(plain));
+    assert!(!rendered.contains('\u{feff}'), "the mark is still printed");
+
+    // Only a *leading* mark is skipped. `U+FEFF` is not whitespace in Unicode, so anywhere else
+    // it is an ordinary bareword character and the lines below the first are untouched.
+    let two = "\u{feff}a 1\nkind curly\n";
+    assert_eq!(tot::parse(two).unwrap_err().line_col(two), (2, 6));
+}
+
 #[test]
 fn tokens_are_self_delimiting() {
     assert_eq!(j(r#"a"b""#), r#"{"a":"b"}"#);

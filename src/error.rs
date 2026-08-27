@@ -62,6 +62,9 @@ pub(crate) fn line_col(src: &str, offset: usize) -> (usize, usize) {
             line_start = i + 1;
         }
     }
+    // The first line begins after any byte-order mark, which the lexer skipped and which a
+    // terminal gives no width. On every later line this is already past it.
+    let line_start = line_start.max(crate::lex::body_start(src)).min(offset);
     (line, src[line_start..offset].chars().count() + 1)
 }
 
@@ -75,6 +78,12 @@ pub(crate) fn render(
 ) -> String {
     let (line, col) = line_col(src, span.start);
     let text = src.lines().nth(line - 1).unwrap_or("");
+    // The mark has to come off the printed line as well as out of the column, or the two
+    // disagree by exactly the width the terminal does not give it.
+    let text = match line {
+        1 => text.strip_prefix(crate::lex::BOM).unwrap_or(text),
+        _ => text,
+    };
     // Clamp the caret to the first line of the span so a multi-line string doesn't
     // underline the whole document.
     let width = src
