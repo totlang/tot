@@ -582,3 +582,301 @@ fn duplicate_keys_are_still_an_error() {
     assert!(fails(r#"a 1 a (param "x")"#).contains("duplicate key `a`"));
     assert!(fails(r#"o {a (str "x") a 2}"#).contains("duplicate key `a`"));
 }
+
+/// The list a diagnostic gives is the list of forms.
+///
+/// Help that has drifted from the tool is the defect this codebase keeps finding, and three
+/// separate spellings of the same list is how it happens. This checks the direction that can be
+/// checked from outside: every name the help offers really is a form.
+#[test]
+fn the_forms_a_diagnostic_lists_are_the_forms() {
+    let message = fails("a (nope)");
+    let (_, rest) = message.split_once("the forms are ").expect("names them");
+    let names: Vec<&str> = rest
+        .split(';')
+        .next()
+        .expect("a first part")
+        .split(", ")
+        .map(|name| name.trim_start_matches("and "))
+        .collect();
+    assert_eq!(names.len(), 7, "{names:?}");
+
+    for name in &names {
+        // A real form gets past the head check, so whatever it fails on next is not that.
+        // `(str)` is legal with no arguments at all, so a success is fine too.
+        if let Err(refused) = plain(&format!("a ({name})")) {
+            assert!(
+                !refused.contains(&format!("`{name}` is not a form")),
+                "the help offers `{name}`, which is not a form"
+            );
+        }
+    }
+    for name in ["param", "if", "str", "import", "get", "map", "it"] {
+        assert!(names.contains(&name), "the help omits `{name}`: {names:?}");
+    }
+}
+
+// --- get --------------------------------------------------------------------------------------
+
+/// **What `get` reads from is an argument**, which is the decision this form needed. Reaching
+/// into the document being built would make a template's meaning depend on the order its
+/// members happen to be evaluated in.
+#[test]
+fn get_reads_one_value_out_of_another() {
+    assert_eq!(
+        plain(r#"a (get "listen.port" {listen {host "::" port 80}})"#).unwrap(),
+        r#"{"a":80}"#
+    );
+    assert_eq!(
+        plain(r#"a (get "xs[1]" {xs [10 20 30]})"#).unwrap(),
+        r#"{"a":20}"#
+    );
+    // A collection comes back whole, the way `tot get` prints one.
+    assert_eq!(
+        plain(r#"a (get "listen" {listen {port 80}})"#).unwrap(),
+        r#"{"a":{"port":80}}"#
+    );
+    // The ordinary case: reaching into a file rather than a literal written beside it.
+    assert_eq!(
+        build_with(
+            r#"port (get "listen.port" (import "base.tot"))"#,
+            &[("base.tot", "listen {host \"::\" port 8080}")]
+        )
+        .unwrap(),
+        r#"{"port":8080}"#
+    );
+}
+
+/// A path is *not* a build input, so unlike a `param`'s name and an `import`'s path it may be
+/// computed. Selecting by parameter is the ordinary reason to want one.
+#[test]
+fn a_get_path_can_be_computed() {
+    assert_eq!(
+        build(
+            r#"a (get (param "env") {prod {n 3} dev {n 1}})"#,
+            &[("env", string("prod"))]
+        )
+        .unwrap(),
+        r#"{"a":{"n":3}}"#
+    );
+    assert_eq!(
+        build(
+            r#"a (get (str (param "env") ".n") {prod {n 3}})"#,
+            &[("env", string("prod"))]
+        )
+        .unwrap(),
+        r#"{"a":3}"#
+    );
+}
+
+/// The default is the only way to reach a member that may not be there: `if` needs a boolean,
+/// and there is no `has`.
+#[test]
+fn get_takes_a_default_only_on_a_miss() {
+    assert_eq!(
+        plain(r#"a (get "listen.port" {listen {}} 8080)"#).unwrap(),
+        r#"{"a":8080}"#
+    );
+    // Evaluated only when it is needed, the way a `param`'s default is. This one cannot be
+    // built, so a hit that evaluated it would fail rather than answer.
+    assert_eq!(
+        plain(r#"a (get "n" {n 1} (param "not-set"))"#).unwrap(),
+        r#"{"a":1}"#
+    );
+    // A default reaches a missing branch as well as a missing leaf.
+    assert_eq!(
+        plain(r#"a (get "x.y.z" {} null)"#).unwrap(),
+        r#"{"a":null}"#
+    );
+}
+
+/// Without a default a miss is a build failure, carrying the diagnostic `tot get` gives —
+/// which names what *was* there, spelled the way a path spells it.
+#[test]
+fn a_get_miss_says_what_was_there() {
+    let message = fails(r#"a (get "listen.prot" {listen {host "::" port 80}})"#);
+    assert!(
+        message.contains("no member `prot` in `listen`"),
+        "{message}"
+    );
+    assert!(message.contains("members are host, port"), "{message}");
+    // The caret goes on the argument that asked, since the miss's own span indexes the path.
+    assert!(message.contains(r#"^^^^^^^^^^^^^"#), "{message}");
+
+    for (src, expected) in [
+        (
+            r#"a (get "xs[9]" {xs [1]})"#,
+            "index 9 is out of range: `xs` has 1 element",
+        ),
+        (
+            r#"a (get "a.b" {a 1})"#,
+            "cannot look up `b`: `a` is an integer, not an object",
+        ),
+        (
+            r#"a (get 1 {a 1})"#,
+            "a path is a string, but this is an integer",
+        ),
+        (
+            r#"a (get "a..b" {a 1})"#,
+            "`a..b` is not a path: expected a member name",
+        ),
+    ] {
+        let message = fails(src);
+        assert!(message.contains(expected), "`{src}`: {message}");
+    }
+}
+
+// --- map and it -------------------------------------------------------------------------------
+
+#[test]
+fn map_evaluates_its_body_once_per_element() {
+    assert_eq!(
+        plain(r#"a (map (str "x-" (it)) ["p" "q"])"#).unwrap(),
+        r#"{"a":["x-p","x-q"]}"#
+    );
+    // The body is a value like any other, so it can be a collection — which is what turns a
+    // list of names into a list of objects.
+    assert_eq!(
+        plain(r#"a (map {name (it) up true} ["p" "q"])"#).unwrap(),
+        r#"{"a":[{"name":"p","up":true},{"name":"q","up":true}]}"#
+    );
+    // `(it)` is the whole element, so it needs no unwrapping to be one.
+    assert_eq!(
+        plain(r#"a (map (it) [1 "two" null])"#).unwrap(),
+        r#"{"a":[1,"two",null]}"#
+    );
+}
+
+/// The two new forms are most of the point together: `map` walks a list of objects and `get`
+/// reaches into each one.
+#[test]
+fn map_and_get_compose() {
+    assert_eq!(
+        plain(r#"ports (map (get "port" (it)) [{port 80} {port 443}])"#).unwrap(),
+        r#"{"ports":[80,443]}"#
+    );
+    assert_eq!(
+        build_with(
+            r#"hosts (map (str (it) ".example.net") (import "regions.tot"))"#,
+            &[("regions.tot", r#"["eu" "us"]"#)]
+        )
+        .unwrap(),
+        r#"{"hosts":["eu.example.net","us.example.net"]}"#
+    );
+}
+
+#[test]
+fn map_over_nothing_evaluates_nothing() {
+    // The body would fail if it were reached, which is how this says it was not.
+    assert_eq!(
+        plain(r#"a (map (param "not-set") [])"#).unwrap(),
+        r#"{"a":[]}"#
+    );
+}
+
+#[test]
+fn map_needs_an_array() {
+    let message = fails(r#"a (map (it) {b 1})"#);
+    assert!(
+        message.contains("`map` works over an array, but this is an object"),
+        "{message}"
+    );
+    assert!(fails(r#"a (map (it) "xs")"#).contains("but this is a string"));
+}
+
+/// `(it)` is refused where there is no element, and this is a *parse* error — so `tot check`
+/// catches it without anything being built.
+#[test]
+fn it_outside_a_map_body_is_refused() {
+    for src in [
+        "a (it)",
+        r#"a (str "x" (it))"#,
+        // The list argument is evaluated in the scope the `map` itself sits in, not in its body.
+        r#"a (map (it) [(it)])"#,
+    ] {
+        let error = Template::parse(src).expect_err("no element here");
+        assert!(
+            error
+                .message
+                .contains("`it` is only meaningful inside a `(map …)`"),
+            "`{src}`: {error}"
+        );
+    }
+}
+
+/// A `map` may not appear inside another `map`'s body, which is what keeps `(it)` free of a
+/// shadowing rule: it names the element of exactly one `map`, and there is only ever one.
+#[test]
+fn a_map_may_not_nest_in_a_body_but_may_in_the_list() {
+    let error = Template::parse(r#"a (map (map (it) [1]) [2])"#).expect_err("ambiguous");
+    assert!(
+        error
+            .message
+            .contains("a `map` cannot appear inside another `map`'s body"),
+        "{error}"
+    );
+    // It hides no better inside a collection.
+    assert!(Template::parse(r#"a (map {b (map (it) [1])} [2])"#).is_err());
+
+    // In the list argument there is no ambiguity: that `map` finishes before the body runs.
+    assert_eq!(
+        plain(r#"a (map (str "<" (it) ">") (map (str "x" (it)) ["p" "q"]))"#).unwrap(),
+        r#"{"a":["<xp>","<xq>"]}"#
+    );
+}
+
+/// An import is a wall. An imported file is parsed on its own, so `(it)` in one is an error
+/// rather than a reach into whatever imported it — which is also what keeps the build cache
+/// sound, since a file's value cannot depend on the body it was imported inside.
+#[test]
+fn it_does_not_cross_an_import() {
+    let message = build_with(
+        r#"a (map (import "frag.tott") ["p" "q"])"#,
+        &[("frag.tott", "(it)")],
+    )
+    .expect_err("no element in frag.tott");
+    assert!(
+        message.contains("`it` is only meaningful inside a `(map …)`"),
+        "{message}"
+    );
+    assert!(message.contains("in frag.tott"), "{message}");
+
+    // A `map` of its own is fine there, and reads its own element.
+    assert_eq!(
+        build_with(
+            r#"a (map (import "frag.tott") ["p" "q"])"#,
+            &[("frag.tott", r#"(map (str "y" (it)) ["1" "2"])"#)],
+        )
+        .unwrap(),
+        r#"{"a":[["y1","y2"],["y1","y2"]]}"#
+    );
+}
+
+#[test]
+fn map_and_get_arities_are_checked() {
+    for (src, expected) in [
+        (
+            r#"a (map (it))"#,
+            "`map` takes 2 arguments, but was given 1",
+        ),
+        (
+            r#"a (map (it) [1] [2])"#,
+            "`map` takes 2 arguments, but was given 3",
+        ),
+        (
+            r#"a (get "b")"#,
+            "`get` takes 2 or 3 arguments, but was given 1",
+        ),
+        (
+            r#"a (get "b" {} 1 2)"#,
+            "`get` takes 2 or 3 arguments, but was given 4",
+        ),
+        (
+            r#"a (map (it 1) [2])"#,
+            "`it` takes no arguments, but was given 1",
+        ),
+    ] {
+        let message = fails(src);
+        assert!(message.contains(expected), "`{src}`: {message}");
+    }
+}

@@ -9,6 +9,8 @@
 //! replicas (if (param "prod") 5 1)
 //! image    (str "registry.example/" (param "name") ":" (param "tag"))
 //! regions  (import "regions.tot")
+//! hosts    (map (str (it) ".example.net") (import "regions.tot"))
+//! port     (get "listen.port" (import "base.tot") 8080)
 //! ```
 //!
 //! A form is `(head arg…)`, evaluated once and replaced by its value. Parens are the sigil
@@ -16,9 +18,9 @@
 //! looking — the same reason a `(str …)` form is preferred to `"${name}"` interpolation, which
 //! would make every string potentially computed and force a reader to scan for it.
 //!
-//! There are four forms and no way to define a fifth. That is the discipline the whole design
-//! rests on: the moment a template file can define a function, people write libraries, and a
-//! configuration file becomes a program that has to be read as one.
+//! There are seven forms and no way to define an eighth. That is the discipline the whole
+//! design rests on: the moment a template file can define a function, people write libraries,
+//! and a configuration file becomes a program that has to be read as one.
 //!
 //! | form | |
 //! |---|---|
@@ -27,6 +29,23 @@
 //! | `(if cond then else)` | `cond` must be a boolean; only the branch taken is evaluated |
 //! | `(str a b …)` | joins strings and numbers into one string |
 //! | `(import "file")` | that file's value, read relative to the file importing it |
+//! | `(get path value)` | the value at `path` inside `value` |
+//! | `(get path value default)` | …or `default` when there is nothing there |
+//! | `(map body list)` | `body` evaluated once per element of `list` |
+//! | `(it)` | the element the enclosing `(map …)` is on |
+//!
+//! `it` is the one that had to be argued for, since a fixed form set stops being fixed the
+//! moment a form is added for convenience. `map` applies something to each element, and that
+//! something needs a way to say *the element* — so the placeholder is a form rather than a bare
+//! `_`, because the sentence the paren sigil rests on is that everything computed is inside
+//! parens and everything outside them is not. `_` would have been shorter and would have broken
+//! it.
+//!
+//! A `map` may not appear inside another `map`'s **body**, which is what keeps `(it)` free of a
+//! shadowing rule: it names the element of exactly one `map`, and there is only ever one to
+//! name. (In the *list* argument it is fine — that one finishes before the body ever runs.) An
+//! import is a wall for the same reason: an imported file is parsed on its own, so `(it)` in it
+//! is an error rather than a reach into whatever imported it.
 //!
 //! ```
 //! use tot::template::{Params, Template};
@@ -45,7 +64,7 @@ use std::collections::HashMap;
 use crate::error::{Error, Span};
 use crate::lex::{Dialect, Token, TokenKind, tokenize};
 use crate::parse::{MAX_DEPTH, bad_value, literal, lone_bareword, missing_value};
-use crate::path::kind;
+use crate::path::{Path, kind};
 use crate::value::{Map, Value};
 
 /// How deep imports may nest. A cycle is caught by name and reported as one; this is the
@@ -88,14 +107,20 @@ struct Form {
     args: Vec<Node>,
 }
 
-/// The forms. There are four, and adding a fifth should be a deliberate decision rather than
-/// a convenience.
+/// Every form, named once, so that no diagnostic listing them can drift from the set.
+const FORMS: &str = "param, if, str, import, get, map, and it";
+
+/// The forms. There are seven, and adding an eighth should be a deliberate decision rather
+/// than a convenience.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Head {
     Param,
     If,
     Str,
     Import,
+    Get,
+    Map,
+    It,
 }
 
 impl Head {
@@ -105,6 +130,9 @@ impl Head {
             "if" => Some(Head::If),
             "str" => Some(Head::Str),
             "import" => Some(Head::Import),
+            "get" => Some(Head::Get),
+            "map" => Some(Head::Map),
+            "it" => Some(Head::It),
             _ => None,
         }
     }
@@ -115,6 +143,9 @@ impl Head {
             Head::If => "if",
             Head::Str => "str",
             Head::Import => "import",
+            Head::Get => "get",
+            Head::Map => "map",
+            Head::It => "it",
         }
     }
 
@@ -125,6 +156,9 @@ impl Head {
             Head::If => (3, Some(3)),
             Head::Str => (0, None),
             Head::Import => (1, Some(1)),
+            Head::Get => (2, Some(3)),
+            Head::Map => (2, Some(2)),
+            Head::It => (0, Some(0)),
         }
     }
 
@@ -138,6 +172,15 @@ impl Head {
             }
             Head::Str => "write `(str a b …)`",
             Head::Import => "write `(import \"file.tot\")`",
+            Head::Get => {
+                "write `(get \"listen.port\" value)`, or \
+                 `(get \"listen.port\" value default)` for a value that may not have it"
+            }
+            Head::Map => {
+                "write `(map body list)`; the body is evaluated once per element, \
+                 with `(it)` standing for the element"
+            }
+            Head::It => "write `(it)`, which takes nothing: it is the element `map` is on",
         }
     }
 
@@ -172,6 +215,7 @@ impl Template {
             tokens: &tokens,
             pos: 0,
             depth: 0,
+            in_body: false,
         }
         .document()?;
         Ok(Template {
@@ -201,6 +245,7 @@ pub(crate) fn validate(src: &str, tokens: &[Token]) -> Result<(), Error> {
         tokens,
         pos: 0,
         depth: 0,
+        in_body: false,
     }
     .document()
     .map(|_| ())
@@ -216,6 +261,10 @@ struct Parser<'a, 't> {
     tokens: &'t [Token],
     pos: usize,
     depth: usize,
+    /// Whether the position being parsed is inside a `(map …)`'s body, which is the only place
+    /// `(it)` means anything and the one place a `map` may not appear. Tracking it here is what
+    /// makes both of those a parse error — caught by `tot check`, rather than at build time.
+    in_body: bool,
 }
 
 impl<'a> Parser<'a, '_> {
@@ -417,10 +466,9 @@ impl<'a> Parser<'a, '_> {
             TokenKind::Bareword => {
                 let name = self.text(head_span);
                 Head::parse(name).ok_or_else(|| {
-                    Error::new(head_span, format!("`{name}` is not a form")).with_help(
-                        "the forms are param, if, str, and import; there is no way \
-                                    to define another",
-                    )
+                    Error::new(head_span, format!("`{name}` is not a form")).with_help(format!(
+                        "the forms are {FORMS}; there is no way to define another"
+                    ))
                 })?
             }
             TokenKind::RParen => {
@@ -428,7 +476,7 @@ impl<'a> Parser<'a, '_> {
                     Span::new(open.start, head_span.end),
                     "a form needs a name",
                 )
-                .with_help("the forms are param, if, str, and import"));
+                .with_help(format!("the forms are {FORMS}")));
             }
             kind => {
                 return Err(Error::new(
@@ -438,10 +486,14 @@ impl<'a> Parser<'a, '_> {
                         kind.describe()
                     ),
                 )
-                .with_help("the forms are param, if, str, and import"));
+                .with_help(format!("the forms are {FORMS}")));
             }
         };
         self.pos += 1;
+
+        // Whether this form itself is inside some enclosing `map`'s body. Read before the
+        // arguments, because parsing them moves the flag and puts it back.
+        let in_body = self.in_body;
 
         let mut args = Vec::new();
         let close = loop {
@@ -456,11 +508,43 @@ impl<'a> Parser<'a, '_> {
                     self.pos += 1;
                     break end;
                 }
-                _ => args.push(self.value()?),
+                _ => {
+                    // A `map`'s first argument is its body, and the body is the whole extent of
+                    // what `(it)` means. Its second is an ordinary value in the scope the `map`
+                    // itself sits in.
+                    if head == Head::Map {
+                        self.in_body = args.is_empty();
+                    }
+                    let arg = self.value();
+                    self.in_body = in_body;
+                    args.push(arg?);
+                }
             }
         };
 
         let span = Span::new(open.start, close);
+
+        // Where a form may stand, before whether it is well formed: `(it 1)` outside a `map` is
+        // better answered by saying there is no element here than by counting its arguments.
+        if head == Head::It && !in_body {
+            return Err(
+                Error::new(span, "`it` is only meaningful inside a `(map …)`").with_help(
+                    "`(it)` is the element a `map` is working on, and there is no `map` here; \
+                     an imported file is parsed on its own, so `(it)` in one cannot reach the \
+                     file that imported it",
+                ),
+            );
+        }
+        if head == Head::Map && in_body {
+            return Err(
+                Error::new(span, "a `map` cannot appear inside another `map`'s body").with_help(
+                    "`(it)` names the element of one `map`, and in a body there would be two; \
+                     a `map` in the list argument of another is fine, since that one finishes \
+                     before the body runs",
+                ),
+            );
+        }
+
         let (least, most) = head.arity();
         if args.len() < least || most.is_some_and(|most| args.len() > most) {
             // The noun is on the "takes" side, so the count alone reads better on the other.
@@ -564,6 +648,7 @@ impl Node {
 
 fn arity(least: usize, most: Option<usize>) -> String {
     match most {
+        Some(0) if least == 0 => "no arguments".to_string(),
         Some(most) if most == least => plural(least, "argument"),
         Some(most) => format!("{least} or {most} arguments"),
         None => "any number of arguments".to_string(),
@@ -741,6 +826,7 @@ impl Template {
                 source: self.source.clone(),
             }],
             done: HashMap::new(),
+            elements: Vec::new(),
         };
         build.node(&self.root)
     }
@@ -759,6 +845,13 @@ struct Build<'a, I: Imports> {
     stack: Vec<Frame>,
     /// What each file already built to, by the name its importer gave it.
     done: HashMap<String, Value>,
+    /// The element each open `(map …)` is on, innermost last, which is what `(it)` reads.
+    ///
+    /// A `map` may not appear in another's body, so within one file this is never deeper than
+    /// one. It is a stack because an import *can* nest one: `(map (import "x.tott") …)` is a
+    /// body that evaluates a file with a `map` of its own — whose `(it)` is its own element,
+    /// since the imported file was parsed on its own and cannot see this one's.
+    elements: Vec<Value>,
 }
 
 impl<I: Imports> Build<'_, I> {
@@ -804,6 +897,9 @@ impl<I: Imports> Build<'_, I> {
             Head::If => self.conditional(form),
             Head::Str => self.join(form),
             Head::Import => self.import(form, span),
+            Head::Get => self.lookup(form),
+            Head::Map => self.each(form),
+            Head::It => Ok(self.element()),
         }
     }
 
@@ -895,6 +991,10 @@ impl<I: Imports> Build<'_, I> {
         // graph that shares a fragment costs time exponential in its depth, and sharing a
         // fragment is the ordinary reason to have one. A name in here has finished building,
         // so it cannot also be on the stack, and looking here first cannot hide a cycle.
+        //
+        // Nor does a file's value depend on *where* it was imported from. `(it)` is refused in
+        // a file that does not open its own `(map …)`, and an import's path is written down, so
+        // nothing about the body a `(import …)` sits inside can reach the file it loads.
         if let Some(value) = self.done.get(&loaded.name) {
             return Ok(value.clone());
         }
@@ -950,6 +1050,90 @@ impl<I: Imports> Build<'_, I> {
                 self.node(&template.root)
             }
         }
+    }
+
+    /// `(get path value)`: one value out of another, by a path spelled the way `tot get` spells
+    /// one.
+    ///
+    /// **What it reads from is an argument.** That is the whole of the decision this form
+    /// needed: reaching into the document being built would make a template's meaning depend on
+    /// the order its members happen to be evaluated in, and would let a document refer to
+    /// itself. Handing `get` the value makes it an ordinary function of its arguments.
+    ///
+    /// The path is computed rather than written down, unlike a `param`'s name and an `import`'s
+    /// path. Those two are static because they are the build's *inputs*, and a reader should be
+    /// able to see what a template needs without running it. A path is not an input, and
+    /// selecting by parameter — `(get (param "env") (import "environments.tot"))` — is the
+    /// ordinary reason to want one.
+    fn lookup(&mut self, form: &Form) -> Result<Value, BuildError> {
+        let spelling = self.node(&form.args[0])?;
+        let Value::String(text) = spelling else {
+            return Err(self.fail(
+                Error::new(
+                    form.args[0].span,
+                    format!("a path is a string, but this is {}", kind(&spelling)),
+                )
+                .with_help("a path names one value, like `listen.port` or `regions[0]`"),
+            ));
+        };
+        let path = Path::parse(&text).map_err(|mut e| {
+            e.message = format!("`{text}` is not a path: {}", e.message);
+            self.fail(at(form.args[0].span, e))
+        })?;
+
+        let target = self.node(&form.args[1])?;
+        match path.get(&target) {
+            Ok(value) => Ok(value.clone()),
+            // Only on a miss, the way a `param`'s default is evaluated only when it was not set.
+            Err(_) if form.args.len() > 2 => self.node(&form.args[2]),
+            Err(miss) => Err(self.fail(at(form.args[0].span, miss))),
+        }
+    }
+
+    /// `(map body list)`: the body evaluated once per element, with `(it)` standing for it.
+    fn each(&mut self, form: &Form) -> Result<Value, BuildError> {
+        let over = self.node(&form.args[1])?;
+        let Value::Array(items) = over else {
+            return Err(self.fail(
+                Error::new(
+                    form.args[1].span,
+                    format!("`map` works over an array, but this is {}", kind(&over)),
+                )
+                .with_help(
+                    "mapping an object would need a spelling for the key as well as the \
+                     value, and `(it)` is only one thing",
+                ),
+            ));
+        };
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            self.elements.push(item);
+            let value = self.node(&form.args[0]);
+            self.elements.pop();
+            out.push(value?);
+        }
+        Ok(Value::Array(out))
+    }
+
+    /// `(it)`: the element the innermost open `map` is on.
+    fn element(&self) -> Value {
+        self.elements
+            .last()
+            .cloned()
+            .expect("`it` outside a map's body is refused when the form is parsed")
+    }
+}
+
+/// Re-points an error at a span in the file being built, keeping what it said.
+///
+/// A path is parsed and resolved against its own text, so its spans index the path rather than
+/// this template. What it says still belongs to the reader; only the caret has to move, onto
+/// the argument that asked.
+fn at(span: Span, error: Error) -> Error {
+    let moved = Error::new(span, error.message);
+    match error.help {
+        Some(help) => moved.with_help(help),
+        None => moved,
     }
 }
 

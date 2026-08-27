@@ -434,6 +434,38 @@ fn a_form_can_be_the_whole_document() {
     assert_eq!(t(r#"(param "whole" 1)"#), "(param \"whole\" 1)\n");
 }
 
+/// `(it)` takes nothing, so it is a form with an empty pair of brackets — and an empty shape
+/// collapses even when it was written open, exactly as `{}` and `[]` do.
+#[test]
+fn a_form_with_no_arguments_keeps_its_brackets_together() {
+    assert_eq!(t(r#"a (map (it) ["p"])"#), "a (map (it) [\"p\"])\n");
+
+    // Written open it collapses anyway, the way `{}` and `[]` do. The newline is between the
+    // `map`'s parens as well, so that one turns block — a newline anywhere inside a pair of
+    // brackets is what makes them block, in a form exactly as in a collection.
+    assert_eq!(t("a (map (it\n) [1])"), "a (map\n  (it)\n  [1]\n)\n");
+    assert_eq!(f("xs [1 {\n} 3]"), "xs [\n  1\n  {}\n  3\n]\n");
+}
+
+/// The two newest forms are shaped like every other one, which is the whole reason the
+/// formatter needed nothing for them.
+#[test]
+fn map_and_get_format_like_any_other_form() {
+    assert_eq!(
+        t(r#"a (map   (str  "x-"  (it))  ["p"  "q"])"#),
+        "a (map (str \"x-\" (it)) [\"p\" \"q\"])\n"
+    );
+    assert_eq!(
+        t(r#"a (get  "listen.port"  {listen {port 80}}  8080)"#),
+        "a (get \"listen.port\" {listen {port 80}} 8080)\n"
+    );
+    // Block form, where a reshaping body is what a reader most wants on its own lines.
+    assert_eq!(
+        t("hosts (map\n{\nname (it)\nup true\n}\n[\"p\"]\n)"),
+        "hosts (map\n  {\n    name (it)\n    up true\n  }\n  [\"p\"]\n)\n"
+    );
+}
+
 #[test]
 fn invalid_templates_are_refused() {
     assert!(format_template("a (nope)").is_err());

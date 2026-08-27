@@ -614,6 +614,7 @@ fn the_example_template_still_builds_its_document() {
             "examples/service.tot",
             "examples/service.tott",
             "examples/regions.tot",
+            "examples/defaults.tot",
         ],
         "",
     );
@@ -1320,4 +1321,47 @@ fn the_help_teaches_a_schema_that_works() {
     let out = run(&["check", &flag], "name 1\nlisten {host \"::\" port 80}\n");
     assert_eq!(out.code, 1);
     assert!(out.stderr.contains("expected string"), "{}", out.stderr);
+}
+
+/// The same guard for the other example the help gives: it shows a `.tott` file, so `tot build`
+/// has to accept the one it shows and produce what it says it will.
+#[test]
+fn the_help_teaches_a_template_that_builds() {
+    let help = run(&["help"], "").stdout;
+
+    let example = help
+        .split_once("TEMPLATES\n")
+        .expect("a TEMPLATES section")
+        .1
+        .lines()
+        .skip_while(|line| !line.starts_with("        "))
+        .take_while(|line| line.starts_with("        "))
+        .map(|line| line.trim_start())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(example.contains("(map "), "extracted:\n{example}");
+
+    let dir = TempDir::new("help-template");
+    let template = dir.file("from-help.tott");
+    std::fs::write(&template, &example).expect("write");
+    std::fs::write(dir.file("regions.tot"), "[\"eu\" \"us\"]\n").expect("write");
+
+    let out = run(
+        &[
+            "build",
+            "--set=prod=true",
+            "--set-raw=name=svc",
+            "--set-raw=tag=v1.4.2",
+            arg(&template),
+        ],
+        "",
+    );
+    assert_eq!(out.code, 0, "the help's own template: {}", out.stderr);
+    assert!(out.stdout.contains("replicas 5"), "{}", out.stdout);
+    assert!(
+        out.stdout.contains("image \"registry/svc:v1.4.2\""),
+        "{}",
+        out.stdout
+    );
+    assert!(out.stdout.contains("\"eu.example.net\""), "{}", out.stdout);
 }

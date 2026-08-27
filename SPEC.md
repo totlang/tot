@@ -405,10 +405,12 @@ A `.tott` file is a **template**: the data language plus one production — a `(
 `tot build` turns one into a `.tot` document, and the document is what gets committed and read.
 
 ```tott
-name     "example-service"
-replicas (if (param "prod") 5 1)
-image    (str "registry/" (param "name") ":" (param "tag"))
-regions  (import "regions.tot")
+name      "example-service"
+replicas  (if (param "prod") 5 1)
+image     (str "registry/" (param "name") ":" (param "tag"))
+regions   (import "regions.tot")
+endpoints (map (str "https://" (it) ".example.net") (import "regions.tot"))
+retries   (get "limits.retries" (import "defaults.tot") 3)
 ```
 
 **The data language does not change.** `(` and `)` are ordinary bareword characters in `.tot`
@@ -422,9 +424,10 @@ The two dialects differ in that one character pair and nothing else. A number, a
 `"""` string, the duplicate-key rule, and the diagnostic that blames a missing value on its key
 are all the same in both, because they are the same code.
 
-- The forms are `param`, `if`, `str`, and `import`. **There is no way to define a fifth.** A
-  fixed set is the whole discipline: the moment a template can define a function, people write
-  libraries, and a configuration file becomes a program that has to be read as one.
+- The forms are `param`, `if`, `str`, `import`, `get`, `map`, and `it`. **There is no way to
+  define an eighth.** A fixed set is the whole discipline: the moment a template can define a
+  function, people write libraries, and a configuration file becomes a program that has to be
+  read as one.
 
   | | |
   |---|---|
@@ -433,6 +436,10 @@ are all the same in both, because they are the same code.
   | `(if cond then else)` | `cond` must be a boolean; only the branch taken is evaluated |
   | `(str a b …)` | joins strings, numbers, and booleans into one string |
   | `(import "file")` | that file's value |
+  | `(get path value)` | the value at `path` inside `value` |
+  | `(get path value default)` | …or `default`, when there is nothing there |
+  | `(map body list)` | `body` evaluated once per element of `list` |
+  | `(it)` | the element the enclosing `(map …)` is on |
 
 - **A form goes where a value goes, and only there.** A form may not be a key: a computed key
   would make the shape of a document depend on evaluating it, and the shape is what a reader
@@ -461,6 +468,35 @@ are all the same in both, because they are the same code.
     rather than exponential in its depth, and sharing a fragment is the ordinary reason to have
     one. (A document that *contains* a shared fragment several times is still that large; what
     is shared is the work, not the result.)
+- **`get` reads out of a value it is handed**, and never out of the document being built.
+  Reaching into the document under construction would make a template's meaning depend on the
+  order its members happened to be evaluated in, and would let a document refer to itself;
+  handing `get` the value makes it an ordinary function of its arguments. The path is spelled
+  the way `tot get` spells one, and a miss with no third argument is a build failure carrying
+  that command's diagnostic, which names what *was* there.
+  - **The path may be computed**, unlike a `param`'s name and an `import`'s path. Those two are
+    static because they are the build's *inputs*, and a reader should be able to see what a
+    template needs without running it. A path is not an input, and selecting by parameter —
+    `(get (param "env") (import "environments.tot"))` — is the ordinary reason to want one.
+  - **The third argument is evaluated only on a miss**, the way a `param`'s default is evaluated
+    only when the parameter was not set. It is the only way to reach a member that may be
+    absent, since `if` requires a boolean and there is no `has`.
+- **`map` evaluates its body once per element**, and `(it)` is the element. The list argument has
+  to be an array: mapping an object would need a spelling for the key as well as the value, and
+  `(it)` is one thing.
+  - **The placeholder is a form, not a bare `_`.** The sentence the paren sigil rests on is that
+    anything inside parens is computed and anything outside them is not — a bare `_` in value
+    position would be computed and outside them, and would put a second exception on "a bareword
+    in value position must be a number, `true`, `false`, or `null`". `it` is therefore a
+    deliberate seventh form rather than a convenience: `map` cannot exist without a way to say
+    *the element*, and that is the only thing `it` does.
+  - **A `map` may not appear inside another `map`'s body.** That is what keeps `(it)` free of a
+    shadowing rule: it names the element of exactly one `map`, and there is only ever one to
+    name. In the *list* argument a `map` is fine, since that one finishes before the body runs.
+  - **An import is a wall.** An imported file is parsed on its own, so `(it)` in one is an error
+    rather than a reach into whatever imported it. That is also what keeps building each file
+    once sound — a file's value cannot depend on the body an `(import …)` sits inside.
+  - Both of those are **parse** errors, so `tot check` reports them without building anything.
 - **Parameters come from the command line and nowhere else**, so a build is a pure function of
   its inputs and reproduces anywhere. Reading the environment would be convenient and would let
   `tot build --check` pass on one machine and fail on another for a reason the source does not
@@ -484,7 +520,8 @@ are all the same in both, because they are the same code.
   span belongs to whichever file the form was written in and not to the one the build started
   at.
 - **`tot check` reads a template**, and reading one checks its forms: an unknown head, a wrong
-  argument count, a computed parameter name or import path. `--strict` applies its one lint too
+  argument count, a computed parameter name or import path, an `(it)` with no `map` around it,
+  and a `map` inside another one's body. `--strict` applies its one lint too
   — the parity hazard is the language's, and a form is one more kind of value that can land on
   the wrong line.
   - **`--schema` on a template is refused.** A schema says what shape a document has, and a
@@ -700,10 +737,10 @@ configuration file becomes a program that has to be read as a program. Roughly s
 the target — `import`, `str`, `if`, `get`, `param`, `map` — and a seventh should be a
 deliberate decision, not a convenience.
 
-**Four were built**: `param`, `if`, `str`, `import`. Those four make a usable layer — `if` has
-nothing to branch on without `param`, `str` with `param` is what replaces interpolation, and
-`import` is the composition primitive. The other two were left out rather than guessed at, for
-the same reason enumerations were:
+**Four were built first**: `param`, `if`, `str`, `import`. Those four make a usable layer — `if`
+has nothing to branch on without `param`, `str` with `param` is what replaces interpolation, and
+`import` is the composition primitive. The other two were left out rather than guessed at,
+because each had a question in front of it:
 
 - **`map`** needs a way to write a function in a language whose first constraint is that it has
   none. `(map <form-with-a-hole> list)` needs a placeholder convention, and inventing one under
@@ -712,8 +749,33 @@ the same reason enumerations were:
   thing; reaching into the document being built is another, and the second makes a template's
   meaning depend on evaluation order.
 
-Whether either is wanted is now measurable, the same way `merge` was the measurement for
-whether forms were wanted at all.
+**Both are now built, and both questions were answered before either was.** The answers are
+normative under [Templates](#templates); what they cost is recorded here.
+
+`get` reads out of **a value handed to it as an argument** — the first of the two readings, and
+the second is refused outright rather than made to work. That keeps it an ordinary function of
+its arguments: no ambient document, no order dependence, no way for a document to refer to
+itself. Its path, unlike a `param` name or an `import` path, *may* be computed, because the
+reason those two are static does not reach it: they are the build's inputs and a path is not
+one. That distinction is worth the sentence it costs, because selecting by parameter is the
+main reason to want `get` at all.
+
+`map`'s placeholder is **a form, `(it)`, and not a bare `_`** — which is the seventh form the
+target above said should be deliberate, and it is: `map` is the one builtin that applies
+something to each of many values, and it cannot exist without a way to say *the element*. The
+argument that settled the spelling is that the paren sigil rests on a single sentence — anything
+inside parens is computed and anything outside them is not — and `_` is a computed value written
+outside them. Shorter, and it would have cost the one property that makes a template readable
+without knowing the form set.
+
+Naming the binding instead, `(map "r" body (it "r"))`, was the other candidate. It nests without
+a rule and documents itself at the head of the form, and it was rejected for verbosity in the
+bodies these templates actually have. The cost of the anaphoric spelling is paid by refusing a
+`map` inside another `map`'s **body**: with only one binding ever live, `(it)` needs no shadowing
+rule, which is the readability property the verbose form was buying in the first place. A `map`
+in the *list* argument stays legal, since it finishes before the body runs, and an import is a
+hard wall — which is separately load-bearing, because it is what keeps building each file once
+sound.
 
 ### Two file types
 
@@ -757,13 +819,15 @@ Left out rather than guessed at.
   one property that check exists to provide.
 - **`import` resolves relative to the importing file**, the only answer that makes a fragment
   relocatable.
+- **`get` reads out of an argument**, never out of the document being built, which would make a
+  template's meaning depend on evaluation order.
+- **`map`'s placeholder is a form, `(it)`**, because everything computed in tot sits inside
+  parens. The cost is that a `map` may not sit inside another one's body.
 
 ### Still undecided
 
 - Whether `merge` needs `--at <path>` for merging a fragment somewhere other than the root, or
   whether `set` plus a shell pipeline covers it.
-- Whether `map` and `get` are wanted, and if so how `map` writes a function in a language that
-  has none. See above.
 - Whether a template wants a lint of its own. It gets the one the language has; whether there
   is a second rule worth having — about where a form's arguments sit, say — is unmeasured.
 

@@ -17,10 +17,34 @@ replicas (if (param "prod" false) 5 1)
 debug (if (param "prod" false) false true)
 
 listen {
-  host "0.0.0.0"
+  # `get` reads out of a value you hand it, and never out of the document being built — that
+  # would make this file mean something different depending on the order its members happened
+  # to be evaluated in.
+  host (get "listen.host" (import "defaults.tot"))
   port (param "port" 8080)
 }
+
+retries (get "limits.retries" (import "defaults.tot"))
+
+# A third argument is what to use when the path is not there, which is the only way to reach a
+# member that may be missing: `if` wants a boolean, and there is no `has`.
+timeout (get "limits.timeout" (import "defaults.tot") 30)
 
 # `import` embeds one value, resolved relative to this file so the pair can be moved together.
 # Splicing one document's members into another is `tot merge`, which is a different operation.
 regions (import "regions.tot")
+
+# `map` evaluates its body once per element, with `(it)` standing for the element. It is the
+# one form that needs a placeholder, and the placeholder is a form because everything computed
+# in tot sits inside parens — `_` would have been shorter and would have broken that.
+endpoints (map (str "https://" (it) ".example.net") (import "regions.tot"))
+
+# A body is a value like any other, so it can be a collection — which is how a list of names
+# becomes a list of objects.
+zones (map
+  {
+    region (it)
+    primary false
+  }
+  (import "regions.tot")
+)

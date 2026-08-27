@@ -75,18 +75,29 @@ TEMPLATES
         replicas (if (param \"prod\") 5 1)
         image    (str \"registry/\" (param \"name\") \":\" (param \"tag\"))
         regions  (import \"regions.tot\")
+        hosts    (map (str (it) \".example.net\") (import \"regions.tot\"))
 
-    There are four forms and no way to define a fifth:
+    There are seven forms and no way to define an eighth:
 
         (param \"name\")           a build parameter, set with --set
         (param \"name\" default)   …or default, when it was not set
         (if cond then else)      cond must be a boolean; tot has no truthiness
         (str a b …)              joins strings, numbers, and booleans
         (import \"file\")          that file's value, read relative to this file
+        (get path value)         the value at path inside value
+        (get path value default) …or default, when there is nothing there
+        (map body list)          body evaluated once per element of list
+        (it)                     the element the enclosing map is on
 
     Parens are ordinary characters in .tot and delimiters only in .tott, so no
     .tot document changes meaning. Since parens never appear in data, anything
     inside them is computed and anything outside them is not.
+
+    `get` reads out of a value you hand it and never out of the document being
+    built, which would make a template mean something different depending on the
+    order its members were evaluated in. A `map` may not appear inside another
+    map's body, so `(it)` names the element of exactly one of them and needs no
+    shadowing rule; in the list argument it is fine.
 
     Parameters come from the command line and nowhere else, so a build is a pure
     function of its inputs. Write --set-raw=env=\"$ENV\" if you want the

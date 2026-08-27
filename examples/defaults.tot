@@ -1,0 +1,11 @@
+# Defaults shared by several services, and an ordinary document like any other. `(get …)`
+# reaches into it for one value; `tot merge` folds the whole thing in. Those are different
+# operations, and keeping them different is why neither syntax has to do both.
+
+limits {
+  retries 3
+}
+
+listen {
+  host "0.0.0.0"
+}

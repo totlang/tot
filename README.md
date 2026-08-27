@@ -131,10 +131,12 @@ evaluated at build time and replaced by its value. `tot build` turns one into a 
 document, and the document is what you commit and everything else reads.
 
 ```tott
-name     "example-service"
-replicas (if (param "prod") 5 1)
-image    (str "registry/" (param "name") ":" (param "tag"))
-regions  (import "regions.tot")
+name      "example-service"
+replicas  (if (param "prod") 5 1)
+image     (str "registry/" (param "name") ":" (param "tag"))
+regions   (import "regions.tot")
+endpoints (map (str "https://" (it) ".example.net") (import "regions.tot"))
+retries   (get "limits.retries" (import "defaults.tot") 3)
 ```
 
 ```bash
@@ -148,7 +150,7 @@ JSON Schema, the documents `from json` exists to read. Parens won because **they
 in data**: what's inside them is computed, what's outside isn't, and you can see which without
 knowing the form set.
 
-There are four forms and **no way to define a fifth**:
+There are seven forms and **no way to define an eighth**:
 
 | | |
 |---|---|
@@ -157,11 +159,13 @@ There are four forms and **no way to define a fifth**:
 | `(if cond then else)` | `cond` must be a boolean; only the branch taken is evaluated |
 | `(str a b …)` | joins strings, numbers, and booleans |
 | `(import "file")` | that file's value, resolved relative to the importing file |
+| `(get path value)` | the value at `path` inside `value` |
+| `(get path value default)` | …or `default`, when there's nothing there |
+| `(map body list)` | `body` evaluated once per element of `list` |
+| `(it)` | the element the enclosing `(map …)` is on |
 
 The fixed set is the whole discipline — the moment a template can define a function, people
-write libraries and a config file becomes a program you have to read as one. `map` and `get`
-are deliberately absent; [the spec](SPEC.md#the-constraint-that-has-to-be-designed-in-first)
-says what each would need decided first.
+write libraries and a config file becomes a program you have to read as one.
 
 Things worth knowing:
 
@@ -172,6 +176,21 @@ Things worth knowing:
   template needs and what it pulls in without running it.
 - **`if` takes a boolean** — no truthiness here either. The branch not taken isn't evaluated,
   so it can import a file this configuration doesn't have.
+- **`get` reads out of a value you hand it**, never out of the document being built — that would
+  make a template's meaning depend on the order its members happened to be evaluated in, and let
+  a document refer to itself. Its path *may* be computed, unlike a `param` name or an `import`
+  path: those are static because they're the build's inputs, and a path isn't one. Selecting by
+  parameter, `(get (param "env") (import "environments.tot"))`, is the ordinary reason to want
+  one. The third argument is the only way to reach a member that may be missing, since `if`
+  wants a boolean and there's no `has`.
+- **`map` needs a placeholder, and `(it)` is a form because everything computed in tot sits
+  inside parens.** `_` would have been shorter and would have broken the sentence the paren
+  sigil rests on. A `map` may not appear inside another `map`'s *body*, so `(it)` names the
+  element of exactly one of them and never needs a shadowing rule; in the *list* argument it's
+  fine, since that one finishes before the body runs. An import is a wall for the same reason —
+  an imported file is parsed on its own, so `(it)` in one is an error rather than a reach into
+  whatever imported it, which is also what keeps the build cache sound. Both are parse errors,
+  so `tot check` catches them without building anything.
 - **Parameters come from the command line and nowhere else**, so a build reproduces anywhere.
   `--set=N=V` takes a tot value, `--set-raw=N=V` takes a literal string — the same split as
   `set` / `set --raw`. Want the environment? `--set-raw=env="$ENV"` puts it in plain sight.
@@ -406,13 +425,8 @@ formatting preserves the parsed value, and formatting is idempotent.
 
 ## Next
 
-`tot merge`, `tot set`, schema validation, the `.tott` template layer, and `fmt` and `check` for
-templates are all built. Still open, in rough order:
-
-- **`map` and `get` forms.** Deliberately absent — `map` needs a way to write a function in a
-  language whose first constraint is that it has none, and `get` needs a decision about what it
-  reads from. `merge` was the measurement for whether forms were wanted at all; these two now
-  get the same treatment.
+`tot merge`, `tot set`, schema validation, the `.tott` template layer with all seven of its
+forms, and `fmt` and `check` for templates are all built. Still open, in rough order:
 
 - **Enumerations in schemas.** The most obvious missing check, with no good spelling yet —
   `["debug" "info"]` already means an array of one element type, so it can't also mean a choice
@@ -420,7 +434,6 @@ templates are all built. Still open, in rough order:
 - **In-place editing that keeps comments.** `set` and `merge` fold values, so they can't write
   back over a hand-written config without losing its comments. Doing that properly means
   splicing text through the CST, which is a different and larger feature.
-- **A template layer**, if `merge` and `set` turn out not to be enough. The design — parens for
-  forms, no user-defined functions, a separate file type so `.tot` stays data — is written up
-  under [Composition](SPEC.md#composition-prospective), along with why the alternatives lose.
-  It's deliberately not built yet: `merge` is the measurement that says whether it's needed.
+- **A lint of its own for templates.** A template gets the one lint the language has, since the
+  parity hazard is the language's. Whether there's a second rule worth having — about where a
+  form's arguments sit, say — is unmeasured.
