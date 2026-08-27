@@ -454,7 +454,7 @@ document — the formatting, the conversions, the schema violations, the caret d
 what `tot` says about it.
 
 ```bash
-cd site && npm install && npm run build
+cd site && pnpm install && pnpm build
 ```
 
 That needs the `wasm32-unknown-unknown` target and `wasm-pack` on top of the usual toolchain. The

@@ -4,13 +4,17 @@ The tot website. Astro, statically generated, served as a directory of files.
 
 ```bash
 cd site
-npm install
-npm run dev            # http://localhost:4321
-npm run build          # builds the wasm, then the site, into dist/
+pnpm install
+pnpm dev               # http://localhost:4321
+pnpm build             # builds the wasm, then the site, into dist/
 ```
 
-`npm run build` runs `npm run wasm` first, so a build needs **Rust 1.88+, the
-`wasm32-unknown-unknown` target, and `wasm-pack`** as well as Node. `npm run build:site` skips
+pnpm is the package manager here, declared in `package.json` so corepack picks it up; there is
+no `package-lock.json` and running `npm install` would create one that drifts from
+`pnpm-lock.yaml`.
+
+`pnpm build` runs `pnpm run wasm` first, so a build needs **Rust 1.88+, the
+`wasm32-unknown-unknown` target, and `wasm-pack`** as well as Node. `pnpm build:site` skips
 that step when `src/wasm/` is already up to date.
 
 Both pass `--force`, which clears the content layer cache, and that is not optional: Astro keeps
@@ -66,7 +70,7 @@ Shiki theme built from them is in `rehype-docs.mjs` — change both together.
 
 ## Deploying
 
-`npm run build` produces `dist/`, a directory of static files with no server-side part. How
+`pnpm build` produces `dist/`, a directory of static files with no server-side part. How
 that directory reaches a server is not this repository's business: the runbook, the web server
 configuration and the DNS live with the infrastructure that owns them.
 

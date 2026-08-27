@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "wasm": "wasm-pack build wasm --target web --release --out-dir ../src/wasm --out-name tot",
     "dev": "astro dev",
-    "build": "npm run wasm && astro build --force",
+    "build": "pnpm run wasm && astro build --force",
     "build:site": "astro build --force",
     "preview": "astro preview",
     "check": "astro check"
