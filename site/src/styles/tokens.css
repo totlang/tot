@@ -1,0 +1,329 @@
+/*
+ * The tot design system.
+ *
+ * Gold on brown, after the thing the language is named for. Two themes for the page; code blocks
+ * are dark in both, which keeps one set of token colours honest everywhere and makes code read
+ * as a distinct material rather than as tinted prose.
+ */
+
+:root {
+  --page: #14100a;
+  --surface: #1b1409;
+  --raised: #241a0e;
+  --border: #3a2a16;
+  --hairline: #4a3720;
+  --muted: #8c7554;
+  --dim: #c9b593;
+  --text: #f6ebd8;
+
+  --gold: #f2b950;
+  --gold-hover: #fbe0a8;
+  --gold-deep: #b8761f;
+  --crust-edge: #7a4e14;
+  --ember: #d8663a;
+
+  --accent-solid: #f2b950;
+  --on-accent: #241a0e;
+  --eyebrow: #b8761f;
+
+  --shadow-lift: none;
+
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --page: #fbf3e4;
+  --surface: #f4e9d5;
+  --raised: #f0e3ca;
+  --border: #e5d6bb;
+  --hairline: #d9c7a4;
+  --muted: #7e6b4c;
+  --dim: #5c4830;
+  --text: #2a1e10;
+
+  --gold: #a9691c;
+  --gold-hover: #7a4e14;
+  --gold-deep: #7a4e14;
+  --ember: #b3441c;
+
+  --accent-solid: #e0a038;
+  --on-accent: #241a0e;
+  --eyebrow: #a9691c;
+
+  --shadow-lift: 0 1px 2px rgb(58 42 22 / 8%);
+
+  color-scheme: light;
+}
+
+/* Code is always dark, so these never move. */
+:root {
+  --code-bg: #1b1409;
+  --code-bar: #241a0e;
+  --code-border: #3a2a16;
+  --code-muted: #8c7554;
+  --code-dim: #c9b593;
+
+  --tk: #f6ebd8; /* key — bare, quiet */
+  --ts: #f2b950; /* string — quoted, loud */
+  --tn: #e8955a; /* number */
+  --tb: #d9c58e; /* true / false / null */
+  --tc: #9c8563; /* comment */
+  --tp: #8a6f45; /* punctuation */
+  --tf: #f7c86a; /* form head, .tott only */
+  --te: #e8785a; /* a bareword where a value belongs */
+
+  --sans: 'Instrument Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --disp: 'Bricolage Grotesque', 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+
+  --gutter: clamp(1.25rem, 5vw, 7.5rem);
+  --measure: 68ch;
+  --radius: 12px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--gold);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--gold-hover);
+}
+
+:where(h1, h2, h3, h4) {
+  font-family: var(--disp);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+  margin: 0;
+  text-wrap: balance;
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: var(--gold);
+  color: #241a0e;
+}
+
+/* --- shared furniture ------------------------------------------------------------------ */
+
+.wrap {
+  max-width: 1200px;
+  margin-inline: auto;
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--eyebrow);
+}
+
+.label {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lede {
+  font-size: 1.1875rem;
+  line-height: 1.6;
+  color: var(--dim);
+  text-wrap: pretty;
+  margin: 0;
+}
+
+/* Capsule buttons, after the shape of the thing. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6875rem;
+  border-radius: 999px;
+  padding: 0.8125rem 1.6875rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-wrap: nowrap;
+}
+
+.btn-primary {
+  background: var(--accent-solid);
+  color: var(--on-accent);
+  box-shadow: inset 0 -2px 0 rgb(122 78 20 / 35%);
+}
+
+.btn-primary:hover {
+  background: var(--gold-hover);
+  color: var(--on-accent);
+}
+
+.btn-ghost {
+  border-color: var(--hairline);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.btn-ghost:hover {
+  border-color: var(--gold);
+  color: var(--text);
+}
+
+.chip {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1875rem 0.5625rem;
+  color: var(--muted);
+}
+
+/* Fried-crisp grain. Cheap, and the only texture on the page. */
+.grain {
+  position: relative;
+  isolation: isolate;
+}
+
+.grain::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+:root[data-theme='light'] .grain::before {
+  opacity: 0.035;
+}
+
+/* --- code ------------------------------------------------------------------------------- */
+
+.codeblock {
+  margin: 0;
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--code-bg);
+}
+
+.codeblock-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  background: var(--code-bar);
+  border-bottom: 1px solid var(--code-border);
+  padding: 0.5rem 1rem;
+}
+
+/* The language sits left and everything else — a note, the copy button — collects on the right,
+   however many of them a given block has. */
+.codeblock-bar > :first-child {
+  margin-right: auto;
+}
+
+.codeblock-lang {
+  font-family: var(--mono);
+  font-size: 0.7188rem;
+  color: var(--code-dim);
+}
+
+.codeblock pre {
+  margin: 0;
+  padding: 1.125rem 1.25rem;
+  overflow-x: auto;
+}
+
+.codeblock code,
+code.inline {
+  font-family: var(--mono);
+  font-size: 0.8438rem;
+  line-height: 1.75;
+  tab-size: 2;
+}
+
+.copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--code-muted);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  padding: 0.1875rem 0.4375rem;
+  cursor: pointer;
+}
+
+.copy:hover {
+  color: var(--ts);
+  border-color: var(--code-border);
+}
+
+.copy[data-copied] {
+  color: var(--ts);
+}
+
+/* Inline code sits in prose, so it follows the page theme rather than the code theme. */
+code.inline {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.0625rem 0.3125rem;
+  font-size: 0.875em;
+  color: var(--text);
+}
+
+.tk { color: var(--tk); }
+.ts { color: var(--ts); }
+.tn { color: var(--tn); }
+.tb { color: var(--tb); font-style: italic; }
+.tc { color: var(--tc); font-style: italic; }
+.tp { color: var(--tp); }
+.tf { color: var(--tf); font-weight: 700; }
+.te { color: var(--te); }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Warning severity in a rendered diagnostic. */
+.tw {
+  color: #e0a038;
+}

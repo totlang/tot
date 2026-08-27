@@ -1,0 +1,641 @@
+---
+import Editor from '../components/Editor.astro';
+import Nav from '../components/Nav.astro';
+import Base from '../layouts/Base.astro';
+
+const modes = [
+  { key: 'convert', label: 'convert' },
+  { key: 'schema', label: 'schema' },
+  { key: 'template', label: 'template' },
+];
+
+const targets = ['tot', 'json', 'yaml', 'toml'];
+---
+
+<Base
+  title="Playground — tot"
+  description="Write tot in the browser: convert it to JSON, YAML or TOML, check it against a schema, or build a template with its imports. Runs on the real parser, compiled to WebAssembly."
+  fill
+>
+  <div class="play">
+    <Nav compact section="Playground" current="play" />
+
+    <!-- ── toolbar ──────────────────────────────────────────────────── -->
+    <div class="toolbar">
+      <div class="modes" role="tablist" aria-label="Playground mode">
+        {
+          modes.map((mode) => (
+            <button
+              class="mode-button"
+              type="button"
+              role="tab"
+              data-mode-button={mode.key}
+              aria-selected={mode.key === 'convert' ? 'true' : 'false'}
+            >
+              {mode.label}
+            </button>
+          ))
+        }
+      </div>
+
+      <span class="divider" aria-hidden="true"></span>
+
+      <div class="samples">
+        <span class="label">Load</span>
+        <div class="sample-chips" data-samples></div>
+      </div>
+
+      <div class="tools">
+        <button class="tool" type="button" data-action="format">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M4 7h16M4 12h16M4 17h10"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"></path>
+          </svg>
+          Format
+          <kbd>⌘S</kbd>
+        </button>
+        <button class="tool" type="button" data-action="share">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M9 17H6a4 4 0 0 1 0-8h3M15 17h3a4 4 0 0 0 0-8h-3M8.5 13h7"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"></path>
+          </svg>
+          <span data-share-label>Share</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── stage ────────────────────────────────────────────────────── -->
+    <div class="stage">
+      <section class="mode" data-mode="convert">
+        <div class="split">
+          <Editor id="convert-input" name="input.tot" badge="document" />
+
+          <div class="pane output">
+            <div class="pane-bar tabs">
+              <div class="tab-row" role="tablist" aria-label="Output format">
+                {
+                  targets.map((target) => (
+                    <button
+                      class="tab"
+                      type="button"
+                      role="tab"
+                      data-target={target}
+                      aria-selected={target === 'json' ? 'true' : 'false'}
+                    >
+                      {target}
+                    </button>
+                  ))
+                }
+              </div>
+              <label class="toggle">
+                <input type="checkbox" data-action="compact" />
+                <span>--compact</span>
+              </label>
+              <button class="tool ghost" type="button" data-action="copy-output">copy</button>
+            </div>
+            <pre class="output-body" data-output="convert"></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="mode" data-mode="schema" hidden>
+        <div class="split">
+          <Editor id="schema-document" name="config.tot" badge="document" />
+          <Editor id="schema-shape" name="config.schema.tot" badge="schema" />
+        </div>
+      </section>
+
+      <section class="mode" data-mode="template" hidden>
+        <div class="split">
+          <div class="pane stack">
+            <div class="file-tabs" role="tablist" aria-label="Open files" data-template-tabs></div>
+            <Editor id="template-editor" name="service.tott" dialect="tott" />
+            <div class="params">
+              <div class="params-head">
+                <span class="label">Parameters</span>
+                <span class="params-note">from the command line and nowhere else</span>
+                <button class="tool ghost" type="button" data-action="add-param">+ add</button>
+              </div>
+              <div class="param-rows" data-param-rows></div>
+            </div>
+          </div>
+
+          <div class="pane output">
+            <div class="pane-bar">
+              <span class="pane-name">service.tot</span>
+              <span class="pane-stat" data-template-stat></span>
+              <button class="tool ghost" type="button" data-action="copy-output">copy</button>
+            </div>
+            <pre class="output-body" data-output="template"></pre>
+            <div class="imports">
+              <div class="params-head">
+                <span class="label">Imports</span>
+                <span class="params-note">acyclic, and each file built once</span>
+              </div>
+              <div class="import-rows" data-import-rows></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ── diagnostics ──────────────────────────────────────────────── -->
+    <div class="drawer">
+      <div class="drawer-bar">
+        <span class="label" data-drawer-title>Diagnostics</span>
+        <span class="counts" data-drawer-counts></span>
+        <span class="drawer-status" data-drawer-status>loading the parser…</span>
+      </div>
+      <div class="drawer-body" data-drawer-body></div>
+    </div>
+  </div>
+
+  <script>
+    import { start } from '../lib/playground';
+    start();
+  </script>
+</Base>
+
+<style>
+  .play {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    background: var(--code-bg);
+  }
+
+  /* The playground is a tool, so it is dark whatever the rest of the site is set to. */
+  .play {
+    --text: #f6ebd8;
+    --dim: #c9b593;
+    --muted: #8c7554;
+    --surface: #1b1409;
+    --raised: #241a0e;
+    --border: #3a2a16;
+    --hairline: #4a3720;
+    --gold: #f2b950;
+    --page: #14100a;
+  }
+
+  .play :global(.nav) {
+    flex-shrink: 0;
+    background: var(--page);
+    border-color: var(--raised);
+  }
+
+  /* --- toolbar ---------------------------------------------------------------------------- */
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.6875rem 1.75rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--raised);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .modes {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px;
+  }
+
+  .mode-button {
+    font-family: var(--mono);
+    font-size: 0.7813rem;
+    color: var(--dim);
+    background: none;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.3125rem 0.9375rem;
+    cursor: pointer;
+  }
+
+  .mode-button[aria-selected='true'] {
+    background: var(--gold);
+    color: #241a0e;
+  }
+
+  .divider {
+    width: 1px;
+    height: 22px;
+    background: var(--border);
+  }
+
+  .samples {
+    display: flex;
+    align-items: center;
+    gap: 0.5625rem;
+    min-width: 0;
+  }
+
+  .sample-chips {
+    display: flex;
+    align-items: center;
+    gap: 0.5625rem;
+    flex-wrap: wrap;
+  }
+
+  .sample-chips :global(button) {
+    font-family: var(--mono);
+    font-size: 0.7813rem;
+    color: var(--dim);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.3125rem 0.8125rem;
+    cursor: pointer;
+  }
+
+  .sample-chips :global(button:hover) {
+    border-color: var(--gold);
+    color: var(--text);
+  }
+
+  .tools {
+    display: flex;
+    align-items: center;
+    gap: 0.5625rem;
+    margin-left: auto;
+  }
+
+  .tool {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: inherit;
+    font-size: 0.8125rem;
+    color: var(--dim);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.3125rem 0.75rem;
+    cursor: pointer;
+  }
+
+  .tool:hover {
+    border-color: var(--gold);
+    color: var(--text);
+  }
+
+  .tool.ghost {
+    border-color: transparent;
+    font-family: var(--mono);
+    font-size: 0.7188rem;
+    color: var(--muted);
+  }
+
+  kbd {
+    font-family: var(--mono);
+    font-size: 0.6563rem;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.0625rem 0.3125rem;
+  }
+
+  /* --- stage ------------------------------------------------------------------------------ */
+
+  .stage {
+    flex-grow: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .mode {
+    flex-grow: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .mode[hidden] {
+    display: none;
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .split > :first-child {
+    border-right: 1px solid var(--raised);
+  }
+
+  .pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    background: var(--surface);
+  }
+
+  .pane.stack {
+    background: var(--code-bg);
+  }
+
+  .pane.stack :global(.editor) {
+    flex-grow: 1;
+    min-height: 0;
+  }
+
+  .pane-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.625rem 1.375rem;
+    border-bottom: 1px solid var(--raised);
+    flex-shrink: 0;
+  }
+
+  .pane-bar.tabs {
+    padding: 0.25rem 1.375rem 0;
+  }
+
+  .pane-name {
+    font-family: var(--mono);
+    font-size: 0.7813rem;
+    color: var(--gold);
+  }
+
+  .pane-stat {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 0.7188rem;
+    color: var(--muted);
+  }
+
+  .tab-row {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    margin-right: auto;
+  }
+
+  .tab {
+    font-family: var(--mono);
+    font-size: 0.7813rem;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    padding: 0.625rem 0.8125rem 0.6875rem;
+    cursor: pointer;
+  }
+
+  .tab[aria-selected='true'] {
+    color: var(--gold);
+    border-bottom-color: var(--gold);
+  }
+
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-family: var(--mono);
+    font-size: 0.7188rem;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .toggle input {
+    accent-color: var(--gold);
+    margin: 0;
+  }
+
+  .output-body {
+    margin: 0;
+    padding: 1rem 1.375rem;
+    flex-grow: 1;
+    min-height: 0;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    line-height: 1.85;
+    white-space: pre;
+    color: var(--tk);
+  }
+
+  .output-body[data-stale] {
+    opacity: 0.4;
+  }
+
+  /* --- template extras -------------------------------------------------------------------- */
+
+  .file-tabs {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    padding: 0 1.375rem;
+    border-bottom: 1px solid var(--raised);
+    flex-shrink: 0;
+    overflow-x: auto;
+  }
+
+  .file-tabs :global(button) {
+    font-family: var(--mono);
+    font-size: 0.7813rem;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    padding: 0.6875rem 0.75rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .file-tabs :global(button[aria-selected='true']) {
+    color: var(--gold);
+    border-bottom-color: var(--gold);
+  }
+
+  .params,
+  .imports {
+    flex-shrink: 0;
+    border-top: 1px solid var(--raised);
+    padding: 0.8125rem 1.375rem 1rem;
+    background: var(--surface);
+    max-height: 11rem;
+    overflow-y: auto;
+  }
+
+  .params-head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding-bottom: 0.6875rem;
+  }
+
+  .params-note {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    color: var(--muted);
+    margin-right: auto;
+  }
+
+  .param-rows,
+  .import-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4375rem;
+  }
+
+  .param-rows :global(.param) {
+    display: grid;
+    grid-template-columns: 5.75rem 7rem 1fr auto;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .param-rows :global(button.kind) {
+    font-family: var(--mono);
+    font-size: 0.7188rem;
+    color: var(--muted);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem 0.4375rem;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .param-rows :global(input) {
+    font-family: var(--mono);
+    font-size: 0.7813rem;
+    color: var(--tk);
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem 0.625rem;
+    min-width: 0;
+  }
+
+  .param-rows :global(input:focus-visible) {
+    outline: none;
+    border-color: var(--gold);
+  }
+
+  .param-rows :global(button.drop) {
+    background: none;
+    border: 0;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 0.25rem;
+  }
+
+  .import-rows :global(.import) {
+    display: grid;
+    grid-template-columns: 9rem 1fr;
+    gap: 0.75rem;
+    font-family: var(--mono);
+    font-size: 0.7188rem;
+    color: var(--muted);
+  }
+
+  .import-rows :global(.import b) {
+    font-weight: 400;
+    color: var(--tk);
+    font-size: 0.7813rem;
+  }
+
+  /* --- diagnostics ------------------------------------------------------------------------ */
+
+  .drawer {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    max-height: 15rem;
+  }
+
+  .drawer-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.625rem 1.75rem;
+    border-bottom: 1px solid var(--raised);
+    flex-shrink: 0;
+  }
+
+  .counts {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  .counts :global(.bad) {
+    color: var(--te);
+  }
+
+  .counts :global(.warn) {
+    color: #e0a038;
+  }
+
+  .drawer-status {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 0.7188rem;
+    color: var(--muted);
+  }
+
+  .drawer-body {
+    padding: 1.125rem 1.75rem 1.375rem;
+    overflow: auto;
+    min-height: 0;
+  }
+
+  .drawer-body :global(.diags) {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+    gap: 1.625rem;
+    margin: 0;
+  }
+
+  .drawer-body :global(pre) {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    line-height: 1.8;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--dim);
+  }
+
+  .drawer-body :global(.clean) {
+    font-family: var(--mono);
+    font-size: 0.7813rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  @media (max-width: 900px) {
+    .split {
+      grid-template-columns: 1fr;
+      grid-template-rows: 1fr 1fr;
+    }
+
+    .split > :first-child {
+      border-right: 0;
+      border-bottom: 1px solid var(--raised);
+    }
+  }
+</style>

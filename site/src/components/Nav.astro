@@ -1,0 +1,191 @@
+---
+import TotMark from './TotMark.astro';
+
+interface Props {
+  /** The playground gets a condensed bar with its own status line in place of the links. */
+  compact?: boolean;
+  section?: string;
+  current?: 'docs' | 'spec' | 'play';
+}
+
+const { compact = false, section, current } = Astro.props;
+
+const links = [
+  { href: '/docs', label: 'Docs', key: 'docs' },
+  { href: '/spec', label: 'Spec', key: 'spec' },
+  { href: '/play', label: 'Playground', key: 'play' },
+] as const;
+---
+
+<header class:list={['nav', { compact }]}>
+  <a class="brand" href="/">
+    <TotMark size={compact ? 30 : 34} />
+    <span class="wordmark">tot</span>
+    {section && <span class="rule" aria-hidden="true"></span>}
+    {section && <span class="section">{section}</span>}
+    {!section && <span class="chip version">v0.1.0</span>}
+  </a>
+
+  <nav class="links" aria-label="Main">
+    {
+      links.map((link) => (
+        <a href={link.href} aria-current={current === link.key ? 'page' : undefined}>
+          {link.label}
+        </a>
+      ))
+    }
+    <a
+      class="gh"
+      href="https://github.com/totlang/tot"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path
+          d="M12 1.5a10.5 10.5 0 0 0-3.32 20.46c.53.1.72-.23.72-.5v-1.8c-2.92.64-3.54-1.4-3.54-1.4-.48-1.22-1.17-1.55-1.17-1.55-.96-.65.07-.64.07-.64 1.06.08 1.62 1.09 1.62 1.09.94 1.62 2.47 1.15 3.07.88.1-.68.37-1.15.67-1.42-2.33-.26-4.78-1.17-4.78-5.19 0-1.15.41-2.08 1.08-2.82-.11-.27-.47-1.34.1-2.79 0 0 .88-.28 2.89 1.08a10 10 0 0 1 5.26 0c2-1.36 2.88-1.08 2.88-1.08.58 1.45.22 2.52.11 2.79.67.74 1.08 1.67 1.08 2.82 0 4.03-2.46 4.92-4.8 5.18.38.33.72.97.72 1.96v2.9c0 .28.19.61.73.5A10.5 10.5 0 0 0 12 1.5Z"
+        ></path>
+      </svg>
+      <span class="gh-label">GitHub</span>
+    </a>
+
+    <button class="theme" type="button" data-theme-toggle aria-label="Switch colour theme">
+      <span class="sun" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="2"></circle>
+          <path
+            d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"></path>
+        </svg>
+      </span>
+      <span class="moon" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path
+            d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linejoin="round"></path>
+        </svg>
+      </span>
+    </button>
+  </nav>
+</header>
+
+<style>
+  .nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2.5rem;
+    padding: 1.375rem var(--gutter);
+    border-bottom: 1px solid var(--raised);
+  }
+
+  .nav.compact {
+    padding: 0.9375rem 1.75rem;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6875rem;
+    color: var(--text);
+    flex-shrink: 0;
+  }
+
+  .brand:hover {
+    color: var(--text);
+  }
+
+  .wordmark {
+    font-family: var(--disp);
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+  }
+
+  .compact .wordmark {
+    font-size: 1.3125rem;
+  }
+
+  .rule {
+    width: 1px;
+    height: 19px;
+    background: var(--border);
+    margin-inline: 0.3125rem;
+  }
+
+  .section {
+    font-size: 0.9375rem;
+    color: var(--dim);
+  }
+
+  .version {
+    margin-left: 0.25rem;
+  }
+
+  .links {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+  }
+
+  .links a {
+    font-size: 0.9375rem;
+    color: var(--dim);
+  }
+
+  .links a[aria-current='page'] {
+    color: var(--gold);
+  }
+
+  .gh {
+    display: flex;
+    align-items: center;
+    gap: 0.4375rem;
+  }
+
+  .theme {
+    display: flex;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.25rem;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .theme span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+  }
+
+  /* The active half is filled, so the control reads as a state rather than as two buttons. */
+  :global(:root[data-theme='light']) .theme .sun,
+  :global(:root:not([data-theme='light'])) .theme .moon {
+    background: var(--accent-solid);
+    color: #241a0e;
+  }
+
+  @media (max-width: 860px) {
+    .links {
+      gap: 1.25rem;
+    }
+
+    .gh-label {
+      display: none;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .links a:not(.gh) {
+      display: none;
+    }
+  }
+</style>

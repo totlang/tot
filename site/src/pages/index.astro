@@ -1,0 +1,983 @@
+---
+import Code from '../components/Code.astro';
+import Footer from '../components/Footer.astro';
+import Nav from '../components/Nav.astro';
+import ShikiCode from '../components/ShikiCode.astro';
+import TotMark from '../components/TotMark.astro';
+import Base from '../layouts/Base.astro';
+
+const RELEASES = 'https://github.com/totlang/tot/releases';
+
+const facts = [
+  {
+    title: 'Every JSON file is already valid',
+    body: '<code class="inline">,</code> and <code class="inline">:</code> are whitespace here, so the parser reads your existing config unchanged. Nothing has to be converted, and a tot document still writes back out as JSON.',
+  },
+  {
+    title: 'Integers and floats stay apart',
+    body: 'Float iff it has a <code class="inline">.</code> or an exponent, so <code class="inline">1 != 1.0</code> and <code class="inline">6e23</code> is a float. An integer keeps its lexeme, so a 400-digit one survives.',
+  },
+  {
+    title: 'Duplicate keys are an error',
+    body: 'No last-wins, so a key that appears twice is reported rather than resolved. Every violation a document has is reported too, not just the first one found.',
+  },
+];
+
+const rules = [
+  {
+    title: 'String values must be quoted',
+    body: 'Bare values are only numbers, <code class="inline">true</code>, <code class="inline">false</code> and <code class="inline">null</code>. Two adjacent barewords are undecidable: <code class="inline">country united states</code> has no recoverable meaning.',
+    code: 'kind "curly"   # ok\nkind curly     # parse error',
+  },
+  {
+    title: '<code class="inline">,</code> and <code class="inline">:</code> are whitespace',
+    body: 'This is what makes every JSON file valid tot, byte for byte. Trailing commas are legal for the same reason.',
+    code: 'a 1, b 2,\na 1  b 2   # identical',
+  },
+  {
+    title: 'The top level has no braces',
+    body: 'The top level is an object with no braces. A document that is a single value <em>is</em> that value, so JSON scalar and array roots still parse.',
+    code: 'host "::"\nport 80       # an object',
+  },
+  {
+    title: "Keys are bare unless they can't be",
+    body: 'A dot is an ordinary character, not a nesting operator, so <code class="inline">com.example.key</code> is a single key. <code class="inline">@type</code> and <code class="inline">$ref</code> need no quotes either.',
+    code: 'path/to/thing 1\n"log level" "debug"',
+  },
+  {
+    title: 'No leading zeros',
+    body: '<code class="inline">01234</code> is an error, so zip codes have to be strings.',
+    code: 'zip "01234"   # ok\nzip 01234     # parse error',
+  },
+  {
+    title: 'Floats must denote a real f64',
+    body: 'Integers have no range limit; floats do. <code class="inline">1e999</code> is a parse error, because tot has no way to write an infinity. <code class="inline">1e-999</code> is fine; it is zero.',
+    code: 'big 6e23      # a float\nhuge 1e999    # parse error',
+  },
+];
+
+const commands = [
+  ['tot fmt', 'format in place; <code class="inline">--check</code> exits 1 on a diff'],
+  [
+    'tot check',
+    'parse and report; <code class="inline">--strict</code>, <code class="inline">--schema</code>',
+  ],
+  ['tot build', 'build a <code class="inline">.tott</code> template into a document'],
+  ['tot merge', 'fold documents together, left to right'],
+  ['tot get', 'print the one value at a path'],
+  ['tot set', 'write a value at a path and print the document'],
+  ['tot to', 'write this document as json, yaml or toml'],
+  ['tot from', 'read another format and write tot'],
+];
+
+const schemaSample = `name    "string"
+listen  {port "int" tls? "bool"}
+regions ["string"]
+labels  {* "string"}
+retries "int|null"`;
+
+const templateSample = `replicas (if (param "prod") 5 1)
+image    (str "registry/svc:"
+              (param "tag"))
+regions  (import "regions.tot")`;
+
+const mergeSample = `tot merge base.tot eu.tot \\
+  | tot set replicas 3 \\
+  | tot to json`;
+
+const heredocSample = `motd """
+  Welcome to example-service.
+
+  Docs live at /v1/docs.
+  """`;
+
+const librarySample = `let value  = tot::parse(src)?;            // -> Value
+let text   = tot::format(src)?;           // canonical tot
+let json   = tot::json::to_string_pretty(&value);
+let bad    = tot::Schema::parse(shape)?.check(src)?;
+
+// behind the \`serde\` feature, off by default
+let config: Config = tot::from_str(src)?;`;
+---
+
+<Base
+  title="tot — JSON with the punctuation removed"
+  description="A configuration language of whitespace-delimited key value pairs. No commas, no colons, bare keys, quoted string values. Every JSON file you already have parses as tot, byte for byte."
+>
+  <Nav />
+
+  <!-- ── hero ─────────────────────────────────────────────────────────── -->
+  <section class="hero grain">
+    <div class="scatter" aria-hidden="true">
+      <TotMark size={150} />
+      <TotMark size={118} />
+      <TotMark size={96} />
+      <TotMark size={80} />
+    </div>
+
+    <div class="wrap hero-inner">
+      <div class="hero-top">
+        <div class="hero-copy">
+          <p class="eyebrow">A configuration language</p>
+          <h1>JSON with the punctuation removed.</h1>
+          <p class="lede">
+            Whitespace-delimited <code class="inline">key value</code> pairs. No commas, no colons,
+            bare keys, quoted string values. Every JSON file you already have parses as tot, byte
+            for byte.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="/play">Try it in the browser</a>
+            <a class="btn btn-ghost" href="/docs">Read the docs</a>
+          </div>
+        </div>
+
+        <div class="download">
+          <p class="label">Download</p>
+          <a class="download-link" href={RELEASES} target="_blank" rel="noopener noreferrer">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3.5v11.5" stroke="var(--gold)" stroke-width="2" stroke-linecap="round"
+              ></path>
+              <path
+                d="m7 10.5 5 4.5 5-4.5"
+                stroke="var(--gold)"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"></path>
+              <path d="M4.5 19.5h15" stroke="var(--gold)" stroke-width="2" stroke-linecap="round"
+              ></path>
+            </svg>
+            <span>github.com/totlang/tot/releases</span>
+          </a>
+          <p class="download-note">Linux · macOS · Windows · one binary</p>
+        </div>
+      </div>
+
+      <!-- The pitch in eight lines. Struck-through characters are exactly what tot removes. -->
+      <div class="compare">
+        <div class="pane">
+          <div class="pane-bar">
+            <span class="pane-name">config.json</span>
+            <span class="pane-note ember">25 characters of punctuation</span>
+          </div>
+          <pre class="pane-code"><span class="gone">&#123;</span>
+  <span class="gone">"</span><span class="tk">name</span><span class="gone">":</span> <span class="ts">"example-service"</span><span class="gone">,</span>
+  <span class="gone">"</span><span class="tk">version</span><span class="gone">":</span> <span class="tn">3</span><span class="gone">,</span>
+  <span class="gone">"</span><span class="tk">listen</span><span class="gone">":</span> <span class="tp">&#123;</span><span class="gone">"</span><span class="tk">host</span><span class="gone">":</span> <span class="ts">"0.0.0.0"</span><span class="gone">,</span> <span class="gone">"</span><span class="tk">port</span><span class="gone">":</span> <span class="tn">8080</span><span class="tp">&#125;</span><span class="gone">,</span>
+  <span class="gone">"</span><span class="tk">regions</span><span class="gone">":</span> <span class="tp">[</span><span class="ts">"us-west-2"</span><span class="gone">,</span> <span class="ts">"eu-central-1"</span><span class="tp">]</span>
+<span class="gone">&#125;</span></pre>
+        </div>
+
+        <div class="arrow" aria-hidden="true">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+            <path d="M4 12h15" stroke="var(--gold)" stroke-width="2" stroke-linecap="round"></path>
+            <path
+              d="M13.5 6.5 19.5 12l-6 5.5"
+              stroke="var(--gold)"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"></path>
+          </svg>
+        </div>
+
+        <div class="pane">
+          <div class="pane-bar">
+            <span class="pane-name light">config.tot</span>
+            <span class="pane-note gold">same document, same types</span>
+          </div>
+          <Code
+            bare
+            class="pane-code"
+            code={`name "example-service"
+version 3
+listen {host "0.0.0.0" port 8080}
+regions ["us-west-2" "eu-central-1"]`}
+          />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── facts ────────────────────────────────────────────────────────── -->
+  <section class="band">
+    <div class="wrap rule-top facts">
+      {
+        facts.map((fact) => (
+          <div class="fact">
+            <h3>{fact.title}</h3>
+            <p set:html={fact.body} />
+          </div>
+        ))
+      }
+    </div>
+  </section>
+
+  <!-- ── the rules ────────────────────────────────────────────────────── -->
+  <section class="band">
+    <div class="wrap rule-top section-stack">
+      <header class="section-head">
+        <div>
+          <h2>The rules that will bite you</h2>
+          <p class="section-sub">Six of them, and they cover most of what there is to learn.</p>
+        </div>
+        <a class="more" href="/docs#rules-that-will-bite-you">Full syntax reference &rarr;</a>
+      </header>
+
+      <div class="cards three">
+        {
+          rules.map((rule) => (
+            <article class="card">
+              <h3 set:html={rule.title} />
+              <p class="card-body" set:html={rule.body} />
+              <Code bare class="card-code" code={rule.code} />
+            </article>
+          ))
+        }
+      </div>
+
+      <div class="heredoc">
+        <div>
+          <h3 class="heredoc-title">Indentation is anchored to the closing delimiter</h3>
+          <p class="heredoc-body">
+            A multi-line string strips indentation relative to its closing <code class="inline"
+              >"""</code
+            >, so reindenting the block around a string cannot change its value. No trailing
+            newline unless you write <code class="inline">\n</code>. The closing delimiter owns its
+            whole line: nothing may follow it.
+          </p>
+        </div>
+        <Code bare class="heredoc-code" code={heredocSample} />
+      </div>
+    </div>
+  </section>
+
+  <!-- ── beyond a single file ─────────────────────────────────────────── -->
+  <section class="band">
+    <div class="wrap rule-top section-stack">
+      <header class="section-head stacked">
+        <div>
+          <h2>Beyond a single file</h2>
+          <p class="section-sub wide">
+            Three things a config format is always asked for. They live in the CLI and in a
+            separate file type, which is what keeps a <code class="inline">.tot</code> document from
+            becoming a program you have to read as one.
+          </p>
+        </div>
+      </header>
+
+      <div class="cards three">
+        <article class="card">
+          <div class="card-head">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9Z"
+                stroke="var(--gold)"
+                stroke-width="1.8"
+                stroke-linejoin="round"></path>
+              <path
+                d="m8.5 12 2.5 2.5 4.5-5"
+                stroke="var(--gold)"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"></path>
+            </svg>
+            <h3>Schemas</h3>
+          </div>
+          <p class="card-body">
+            A schema is a tot document that looks like the documents it describes, with a type
+            where each value would be. It lines up with the config beside it. Every violation is
+            reported, and each one names a <code class="inline">tot get</code> path.
+          </p>
+          <Code bare class="card-code" code={schemaSample} />
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M8.5 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2.5"
+                stroke="var(--gold)"
+                stroke-width="1.8"
+                stroke-linecap="round"></path>
+              <path
+                d="M9 9.5 6.5 12 9 14.5M15 9.5 17.5 12 15 14.5"
+                stroke="var(--gold)"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"></path>
+            </svg>
+            <h3>Templates</h3>
+          </div>
+          <p class="card-body">
+            A <code class="inline">.tott</code> file is tot plus one thing: a form, wherever a value
+            goes. There are seven of them and no way to define an eighth. The fixed set is the whole
+            discipline.
+          </p>
+          <Code bare lang="tott" class="card-code" code={templateSample} />
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M4 6h7M4 12h16M4 18h7"
+                stroke="var(--gold)"
+                stroke-width="1.8"
+                stroke-linecap="round"></path>
+              <path
+                d="m15 3 3 3-3 3M15 15l3 3-3 3"
+                stroke="var(--gold)"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"></path>
+            </svg>
+            <h3>Merge</h3>
+          </div>
+          <p class="card-body">
+            Base plus overlays, left to right. Two objects merge member by member; anything else is
+            replaced whole. An array replaces rather than appends, because concatenation cannot be
+            undone by a later layer.
+          </p>
+          <pre class="card-code shell">{mergeSample}</pre>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── the CLI ──────────────────────────────────────────────────────── -->
+  <section class="band">
+    <div class="wrap rule-top split">
+      <div class="split-copy">
+        <h2>One binary</h2>
+        <p class="lede">
+          <code class="inline">merge</code>, <code class="inline">get</code> and <code
+            class="inline">set</code
+          > all read and write documents, so they chain through a pipe. No FILE means stdin, and so
+          does a FILE of <code class="inline">-</code>.
+        </p>
+        <div class="download-block">
+          <a class="btn btn-primary" href={RELEASES} target="_blank" rel="noopener noreferrer">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3.5v11.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              ></path>
+              <path
+                d="m7 10.5 5 4.5 5-4.5"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"></path>
+              <path d="M4.5 19.5h15" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              ></path>
+            </svg>
+            Download the latest release
+          </a>
+          <p class="download-note">Linux · macOS · Windows · MIT / Apache-2.0</p>
+        </div>
+      </div>
+
+      <div class="terminal">
+        <div class="terminal-bar">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="terminal-title">tot --help</span>
+        </div>
+        <dl class="commands">
+          {
+            commands.map(([name, description]) => (
+              <div class="command">
+                <dt>{name}</dt>
+                <dd set:html={description} />
+              </div>
+            ))
+          }
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── the library ──────────────────────────────────────────────────── -->
+  <section class="band last">
+    <div class="wrap rule-top split reverse">
+      <ShikiCode code={librarySample} lang="rust" file="main.rs" />
+
+      <div class="split-copy">
+        <h2>No dependencies</h2>
+        <p class="lede">
+          The <code class="inline">tot</code> crate pulls in nothing by default. There is no JSON parser
+          and there doesn't need to be, because <code class="inline">parse</code> reads JSON directly.
+          YAML and TOML need third-party parsers, so they live in the CLI instead.
+        </p>
+        <p class="lede">
+          Errors carry a span, and <code class="inline">e.render(src)</code> gives the same caret diagnostic
+          the CLI prints.
+        </p>
+        <p class="unpublished">
+          Not on crates.io yet, so a dependency on it is a git one for now.
+        </p>
+        <div class="pills">
+          <a
+            class="chip pill"
+            href="https://github.com/totlang/tot"
+            target="_blank"
+            rel="noopener noreferrer">Source</a
+          >
+          <a class="chip pill" href="/docs#library">Library docs</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <Footer cta />
+</Base>
+
+<style>
+  /* --- hero ------------------------------------------------------------------------------ */
+
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding: clamp(3rem, 7vw, 6rem) var(--gutter) clamp(3rem, 6vw, 5.5rem);
+  }
+
+  .scatter {
+    position: absolute;
+    top: 2.5rem;
+    right: -6rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 3rem;
+    opacity: 0.055;
+    pointer-events: none;
+    rotate: -8deg;
+  }
+
+  .scatter :global(svg:nth-child(2)) {
+    margin-top: 7rem;
+    rotate: 22deg;
+  }
+
+  .scatter :global(svg:nth-child(3)) {
+    margin-top: 2rem;
+    rotate: -24deg;
+  }
+
+  .scatter :global(svg:nth-child(4)) {
+    margin-top: 9rem;
+    rotate: 12deg;
+  }
+
+  .hero-inner {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 3.5rem;
+  }
+
+  .hero-top {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 4rem;
+  }
+
+  .hero-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1.625rem;
+    max-width: 45rem;
+  }
+
+  h1 {
+    font-size: clamp(2.5rem, 6vw, 4.625rem);
+    letter-spacing: -0.038em;
+    line-height: 1.02;
+  }
+
+  .hero-copy .lede {
+    max-width: 38.75rem;
+  }
+
+  .hero-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    padding-top: 0.375rem;
+    flex-wrap: wrap;
+  }
+
+  .download {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    flex-shrink: 0;
+    padding-bottom: 0.375rem;
+  }
+
+  .download-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.8125rem 1rem;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.8438rem;
+  }
+
+  .download-link:hover {
+    border-color: var(--gold);
+    color: var(--text);
+  }
+
+  .download-note {
+    font-family: var(--mono);
+    font-size: 0.7188rem;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  /* --- the comparison -------------------------------------------------------------------- */
+
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 4rem 1fr;
+    border: 1px solid var(--code-border);
+    border-radius: 16px;
+    overflow: hidden;
+    background: var(--code-bg);
+  }
+
+  .pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .pane-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--code-border);
+  }
+
+  .pane-name {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--code-muted);
+    margin-right: auto;
+  }
+
+  .pane-name.light {
+    color: var(--code-dim);
+  }
+
+  .pane-note {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+  }
+
+  .pane-note.ember {
+    color: var(--ember);
+  }
+
+  .pane-note.gold {
+    color: var(--ts);
+  }
+
+  .compare :global(.pane-code) {
+    margin: 0;
+    padding: 1.625rem 1.5rem;
+    flex-grow: 1;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.8438rem;
+    line-height: 1.85;
+    color: var(--tk);
+  }
+
+  /* What the language takes away, shown being taken away. */
+  .gone {
+    color: var(--tp);
+    text-decoration: line-through;
+    text-decoration-color: var(--ember);
+    text-decoration-thickness: 1.5px;
+  }
+
+  .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--code-bar);
+    border-inline: 1px solid var(--code-border);
+  }
+
+  /* --- bands ----------------------------------------------------------------------------- */
+
+  .band {
+    padding: 0 var(--gutter) clamp(3rem, 6vw, 6rem);
+  }
+
+  .band.last {
+    padding-bottom: clamp(3.5rem, 6.5vw, 6.5rem);
+  }
+
+  .rule-top {
+    padding-top: 2.75rem;
+    border-top: 1px solid var(--raised);
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2.5rem;
+  }
+
+  .fact h3 {
+    font-size: 1.3125rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--gold);
+    margin-bottom: 0.625rem;
+  }
+
+  .fact p {
+    margin: 0;
+    font-size: 0.9688rem;
+    line-height: 1.65;
+    color: var(--dim);
+    text-wrap: pretty;
+  }
+
+  .section-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 2.25rem;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 2.5rem;
+  }
+
+  .section-head h2 {
+    font-size: clamp(1.75rem, 3.2vw, 2.375rem);
+  }
+
+  .section-sub {
+    margin: 0.75rem 0 0;
+    font-size: 1.0313rem;
+    line-height: 1.6;
+    color: var(--dim);
+    max-width: 40rem;
+    text-wrap: pretty;
+  }
+
+  .section-sub.wide {
+    max-width: 44rem;
+  }
+
+  .more {
+    font-size: 0.9375rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  /* --- cards ----------------------------------------------------------------------------- */
+
+  .cards {
+    display: grid;
+    gap: 1.25rem;
+  }
+
+  .cards.three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.625rem;
+    box-shadow: var(--shadow-lift);
+  }
+
+  .card h3 {
+    font-size: 1.1875rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 0.6875rem;
+  }
+
+  .card-body {
+    margin: 0;
+    font-size: 0.9063rem;
+    line-height: 1.65;
+    color: var(--dim);
+    flex-grow: 1;
+    text-wrap: pretty;
+  }
+
+  .card :global(.card-code),
+  .card-code.shell {
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 8px;
+    padding: 0.75rem 0.875rem;
+    font-size: 0.7813rem;
+    line-height: 1.8;
+    overflow-x: auto;
+  }
+
+  .card-code.shell {
+    margin: 0;
+    font-family: var(--mono);
+    color: var(--code-dim);
+  }
+
+  /* --- the heredoc band ------------------------------------------------------------------ */
+
+  .heredoc {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 2.125rem 2.25rem;
+    box-shadow: var(--shadow-lift);
+  }
+
+  .heredoc-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .heredoc-body {
+    margin: 0.8125rem 0 0;
+    font-size: 0.9688rem;
+    line-height: 1.65;
+    color: var(--dim);
+    text-wrap: pretty;
+  }
+
+  .heredoc :global(.heredoc-code) {
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-radius: 10px;
+    padding: 1.125rem 1.25rem;
+    font-size: 0.8125rem;
+    line-height: 1.8;
+    overflow-x: auto;
+  }
+
+  /* --- split sections -------------------------------------------------------------------- */
+
+  .split {
+    display: grid;
+    grid-template-columns: 26.25rem 1fr;
+    gap: 4rem;
+    align-items: start;
+  }
+
+  .split.reverse {
+    grid-template-columns: 1fr 26.25rem;
+  }
+
+  .split-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .split-copy h2 {
+    font-size: clamp(1.75rem, 3.2vw, 2.375rem);
+  }
+
+  .split-copy .lede {
+    font-size: 1.0313rem;
+  }
+
+  .download-block {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5625rem;
+    padding-top: 0.25rem;
+  }
+
+  .pills {
+    display: flex;
+    gap: 0.625rem;
+    padding-top: 0.125rem;
+  }
+
+  .unpublished {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 0.7813rem;
+    color: var(--muted);
+  }
+
+  .pill {
+    padding: 0.4375rem 0.9375rem;
+    font-size: 0.7813rem;
+    color: var(--dim);
+    border-color: var(--hairline);
+  }
+
+  .pill:hover {
+    border-color: var(--gold);
+    color: var(--text);
+  }
+
+  /* --- the terminal ---------------------------------------------------------------------- */
+
+  .terminal {
+    border: 1px solid var(--code-border);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--code-bg);
+  }
+
+  .terminal-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--code-bar);
+    border-bottom: 1px solid var(--code-border);
+    padding: 0.6875rem 1.25rem;
+  }
+
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: var(--hairline);
+  }
+
+  .terminal-title {
+    font-family: var(--mono);
+    font-size: 0.7188rem;
+    color: var(--code-muted);
+    margin-left: 0.625rem;
+  }
+
+  .commands {
+    margin: 0;
+    padding: 1.375rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6875rem;
+  }
+
+  .command {
+    display: grid;
+    grid-template-columns: 11.875rem 1fr;
+    gap: 1.25rem;
+  }
+
+  .command dt {
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    color: var(--ts);
+  }
+
+  .command dd {
+    margin: 0;
+    font-size: 0.8438rem;
+    color: var(--code-dim);
+  }
+
+  /* Inline code inside the dark terminal follows the code palette, not the page's. */
+  .commands :global(code.inline),
+  .compare :global(code.inline) {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--tk);
+  }
+
+  /* --- responsive ------------------------------------------------------------------------ */
+
+  @media (max-width: 1080px) {
+    .cards.three {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .facts {
+      grid-template-columns: 1fr;
+      gap: 1.75rem;
+    }
+
+    .split,
+    .split.reverse {
+      grid-template-columns: 1fr;
+      gap: 2.5rem;
+    }
+
+    .split.reverse :global(.codeblock) {
+      order: 2;
+    }
+  }
+
+  @media (max-width: 900px) {
+    .hero-top {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2.25rem;
+    }
+
+    .compare {
+      grid-template-columns: 1fr;
+    }
+
+    .arrow {
+      border-inline: none;
+      border-block: 1px solid var(--code-border);
+      padding: 0.5rem;
+    }
+
+    .arrow svg {
+      rotate: 90deg;
+    }
+
+    .heredoc {
+      grid-template-columns: 1fr;
+      gap: 1.75rem;
+    }
+
+    .scatter {
+      display: none;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .cards.three {
+      grid-template-columns: 1fr;
+    }
+
+    .section-head {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    .command {
+      grid-template-columns: 1fr;
+      gap: 0.125rem;
+    }
+  }
+</style>

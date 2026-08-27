@@ -1,0 +1,48 @@
+---
+/**
+ * A tot code sample, highlighted at build time by the same tokeniser the playground runs.
+ */
+import { highlight } from '../lib/tot-highlight.mjs';
+
+interface Props {
+  code: string;
+  lang?: 'tot' | 'tott';
+  file?: string;
+  note?: string;
+  bare?: boolean;
+  class?: string;
+}
+
+const { code, lang = 'tot', file, note, bare = false, class: className } = Astro.props;
+const html = highlight(code.replace(/^\n/, '').replace(/\s+$/, ''), lang);
+---
+
+{
+  bare ? (
+    <pre class={`bare ${className ?? ''}`}><code set:html={html} /></pre>
+  ) : (
+    <figure class:list={['codeblock', className]} data-lang={lang}>
+      <div class="codeblock-bar">
+        <span class="codeblock-lang">{file ?? lang}</span>
+        {note && <span class="codeblock-note">{note}</span>}
+      </div>
+      <pre><code set:html={html} /></pre>
+    </figure>
+  )
+}
+
+<style>
+  pre.bare {
+    margin: 0;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.8438rem;
+    line-height: 1.8;
+  }
+
+  .codeblock-note {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    color: var(--code-muted);
+  }
+</style>

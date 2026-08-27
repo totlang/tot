@@ -1,5 +1,9 @@
 [workspace]
 members = ["cli"]
+# The playground's wasm bridge is built by the site, not by `cargo test --workspace`. Excluding
+# it keeps wasm-bindgen and the converters' dependencies out of the library's own build and CI,
+# which is the whole point of the library having none.
+exclude = ["site/wasm"]
 
 [package]
 name = "tot"
@@ -16,7 +20,7 @@ keywords = ["config", "configuration", "parser", "json", "serde"]
 categories = ["config", "parser-implementations", "encoding"]
 # TODO before publishing: `repository = "https://…"`. This checkout has no remote to read one
 # from, and a wrong URL on the crates.io page is worse than none.
-exclude = ["/.github", "/.gitattributes"]
+exclude = ["/.github", "/.gitattributes", "/site"]
 
 # The library stays dependency-free by default. The YAML and TOML converters need
 # third-party parsers, so they live in the `tot-cli` crate instead.

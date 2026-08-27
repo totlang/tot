@@ -445,6 +445,22 @@ the tool's own guarantees over `examples/` (`fmt --check`, `check --strict`, `bu
 and the schema), and a publish dry run. That last one is not ceremony — a missing license and a
 path dependency without a version are both invisible until you try to publish.
 
+## Site
+
+[totlang.dev](https://totlang.dev) is built from [site/](site/) with Astro. The docs there are
+these two files: `/docs` renders this README and `/spec` renders SPEC.md, so the site cannot fall
+behind the language. The playground compiles the library to WebAssembly, so what it says about a
+document — the formatting, the conversions, the schema violations, the caret diagnostics — is
+what `tot` says about it.
+
+```bash
+cd site && npm install && npm run build
+```
+
+That needs the `wasm32-unknown-unknown` target and `wasm-pack` on top of the usual toolchain. The
+wasm crate is excluded from the workspace, so `cargo test --workspace` never builds it and the
+library goes on having no dependencies. [site/README.md](site/README.md) covers deployment.
+
 ## Next
 
 `tot merge`, `tot set`, schema validation, the `.tott` template layer with all seven of its

@@ -1,0 +1,42 @@
+[package]
+name = "tot-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "The tot playground's bridge into the tot library"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The library itself, plus the two converters that are not part of it. `convert.rs` is included
+# from the CLI by path rather than copied, so the YAML and TOML mappings the playground shows
+# are byte for byte the ones `tot to yaml` produces.
+tot = { path = "../.." }
+toml = { version = "1.1.4", features = ["preserve_order"] }
+wasm-bindgen = "0.2"
+yaml_serde = "0.10.7"
+
+# wasm-pack calls wasm-opt with a bare `-O`, which leaves every wasm feature at binaryen's
+# defaults. Rust's wasm32 baseline has moved on since those defaults were set, so the flags have
+# to be named or wasm-opt rejects its own input as invalid ("memory.copy operations require bulk
+# memory operations"). `-Os` because this is a page load, not a server binary.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+    "-Os",
+    "--enable-bulk-memory",
+    "--enable-bulk-memory-opt",
+    "--enable-nontrapping-float-to-int",
+    "--enable-sign-ext",
+    "--enable-multivalue",
+    "--enable-reference-types",
+]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

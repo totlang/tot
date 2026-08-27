@@ -1,0 +1,43 @@
+---
+/**
+ * A code sample in a language that is not tot — Rust, shell, TOML. Highlighted at build time
+ * with the same theme the docs use, so a Rust snippet and a tot snippet look related.
+ */
+import { codeToHtml } from 'shiki';
+
+import { THEME } from '../lib/rehype-docs.mjs';
+
+interface Props {
+  code: string;
+  lang: string;
+  file?: string;
+  note?: string;
+}
+
+const { code, lang, file, note } = Astro.props;
+
+const rendered = await codeToHtml(code.replace(/^\n/, '').replace(/\s+$/, ''), {
+  lang,
+  theme: THEME,
+});
+
+// Shiki brings its own <pre> with a background colour on it; only the tokens are wanted, since
+// the chrome belongs to the site.
+const inner = rendered.replace(/^<pre[^>]*>/, '').replace(/<\/pre>\s*$/, '');
+---
+
+<figure class="codeblock" data-lang={lang}>
+  <div class="codeblock-bar">
+    <span class="codeblock-lang">{file ?? lang}</span>
+    {note && <span class="codeblock-note">{note}</span>}
+  </div>
+  <pre set:html={inner}></pre>
+</figure>
+
+<style>
+  .codeblock-note {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    color: var(--code-muted);
+  }
+</style>

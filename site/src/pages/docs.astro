@@ -1,0 +1,20 @@
+---
+import { getEntry, render } from 'astro:content';
+
+import Prose from '../layouts/Prose.astro';
+
+const entry = await getEntry('docs', 'readme');
+if (!entry) throw new Error('README.md was not found at the repository root');
+const { Content, headings } = await render(entry);
+---
+
+<Prose
+  title="Docs — tot"
+  description="How to use tot: the rules that will bite you, the CLI, schemas, templates, merge, and the Rust library."
+  section="Docs"
+  current="docs"
+  sourceFile="README.md"
+  headings={headings}
+>
+  <Content />
+</Prose>

@@ -1,0 +1,65 @@
+---
+/**
+ * The mark: a capsule at 1.4:1 with a crust stroke and a few speckles, after a tater tot.
+ *
+ * Below 40px the speckles and the highlight are dropped and the stroke thickens, because at that
+ * size they turn into mud and the silhouette is the only thing doing any work.
+ */
+interface Props {
+  size?: number;
+  burnt?: boolean;
+  class?: string;
+}
+
+const { size = 34, burnt = false, class: className } = Astro.props;
+
+const width = size;
+const height = Math.round((size / 43) * 31);
+const detail = size >= 40;
+
+const body = burnt ? '#4A3018' : '#E0A038';
+const edge = burnt ? '#2A1A0C' : '#7A4E14';
+const speck = burnt ? '#1B1409' : '#8A5A18';
+const speckOpacity = burnt ? 0.55 : 0.4;
+---
+
+<svg
+  width={width}
+  height={height}
+  viewBox="0 0 43 31"
+  fill="none"
+  aria-hidden="true"
+  class={className}
+>
+  <rect
+    x="1.5"
+    y="1.5"
+    width="40"
+    height="28"
+    rx="11"
+    fill={body}
+    stroke={edge}
+    stroke-width={detail ? 3 : 4}
+  ></rect>
+  {
+    detail && !burnt && (
+      <path
+        d="M8 10.5c3.2-2.2 7-3 10.6-2.5"
+        stroke="#FBE0A8"
+        stroke-width="2.2"
+        stroke-linecap="round"
+        opacity="0.7"
+      />
+    )
+  }
+  {
+    detail && (
+      <g fill={speck} opacity={speckOpacity}>
+        <ellipse cx="15" cy="18.5" rx="2.9" ry="1.5" transform="rotate(-18 15 18.5)" />
+        <ellipse cx="26" cy="12" rx="3.2" ry="1.4" transform="rotate(12 26 12)" />
+        <ellipse cx="31" cy="21" rx="2.5" ry="1.4" transform="rotate(-8 31 21)" />
+        <ellipse cx="21" cy="24" rx="2" ry="1.2" transform="rotate(6 21 24)" />
+      </g>
+    )
+  }
+</svg>

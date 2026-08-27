@@ -1,0 +1,112 @@
+---
+import '../styles/tokens.css';
+
+interface Props {
+  title: string;
+  description: string;
+  /** The playground fills the viewport, so it opts out of the normal document flow. */
+  fill?: boolean;
+  /** The 404 page is served at every address that has no page, so it must not be indexed. */
+  noindex?: boolean;
+}
+
+const { title, description, fill = false, noindex = false } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta name="twitter:card" content="summary" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap"
+    />
+
+    {/* Before first paint, so a light-mode reader never sees the dark theme flash past. */}
+    <script is:inline>
+      (function () {
+        var theme = 'dark';
+        try {
+          var stored = localStorage.getItem('tot-theme');
+          theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark';
+        } catch (e) {
+          /* Private mode: the default stands. */
+        }
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+  </head>
+
+  <body class:list={{ fill }}>
+    <slot />
+
+    <script>
+      // Theme toggle.
+      for (const button of document.querySelectorAll('[data-theme-toggle]')) {
+        button.addEventListener('click', () => {
+          const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+          document.documentElement.dataset.theme = next;
+          try {
+            localStorage.setItem('tot-theme', next);
+          } catch {
+            /* Nothing to remember it with; the choice still holds for this page. */
+          }
+        });
+      }
+
+      // Copy buttons, added here rather than rendered so the markup stays the same whether or
+      // not the page got its JavaScript.
+      for (const block of document.querySelectorAll('.codeblock')) {
+        const bar = block.querySelector('.codeblock-bar');
+        const code = block.querySelector('pre code');
+        if (!bar || !code) continue;
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'copy';
+        button.textContent = 'copy';
+        button.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(code.textContent ?? '');
+            button.textContent = 'copied';
+            button.dataset.copied = '';
+            setTimeout(() => {
+              button.textContent = 'copy';
+              delete button.dataset.copied;
+            }, 1400);
+          } catch {
+            button.textContent = 'select and copy';
+          }
+        });
+        bar.append(button);
+      }
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  body.fill {
+    height: 100dvh;
+    overflow: hidden;
+  }
+</style>

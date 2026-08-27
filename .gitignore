@@ -1,1 +1,5 @@
 /target
+
+# Editor and agent scratch. Not ignoring it puts `launch.json` in the crate archive, which is
+# the same way four junk files reached the package in bb67ee9.
+/.claude

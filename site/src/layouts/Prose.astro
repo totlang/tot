@@ -1,0 +1,429 @@
+---
+/**
+ * The shell around README.md and SPEC.md.
+ *
+ * Those two files are the documentation. Rendering them rather than restating them is what keeps
+ * the site and the language from drifting apart, so this layout's whole job is navigation: the
+ * sidebar is built from the document's own headings.
+ */
+import Footer from '../components/Footer.astro';
+import Nav from '../components/Nav.astro';
+import Base from './Base.astro';
+
+interface Heading {
+  depth: number;
+  slug: string;
+  text: string;
+}
+
+interface Props {
+  title: string;
+  description: string;
+  section: string;
+  current: 'docs' | 'spec';
+  sourceFile: string;
+  headings: Heading[];
+}
+
+const { title, description, section, current, sourceFile, headings } = Astro.props;
+
+// Only h2 and h3 make navigation; anything deeper is detail within a section.
+const tree = headings
+  .filter((heading) => heading.depth === 2)
+  .map((parent) => {
+    const start = headings.indexOf(parent);
+    const rest = headings.slice(start + 1);
+    const end = rest.findIndex((heading) => heading.depth <= 2);
+    const within = end === -1 ? rest : rest.slice(0, end);
+    return { ...parent, children: within.filter((heading) => heading.depth === 3) };
+  });
+
+const documents = [
+  { href: '/docs', label: 'Guide', note: 'README.md', key: 'docs' },
+  { href: '/spec', label: 'Specification', note: 'SPEC.md', key: 'spec' },
+];
+
+const editUrl = `https://github.com/totlang/tot/blob/main/${sourceFile}`;
+---
+
+<Base title={title} description={description}>
+  <Nav section={section} current={current} />
+
+  <div class="shell">
+    <aside class="sidebar" aria-label="Documentation">
+      <nav class="docs">
+        <p class="label">Documents</p>
+        {
+          documents.map((document) => (
+            <a
+              class:list={['doc', { active: document.key === current }]}
+              href={document.href}
+              aria-current={document.key === current ? 'page' : undefined}
+            >
+              <span>{document.label}</span>
+              <span class="doc-note">{document.note}</span>
+            </a>
+          ))
+        }
+      </nav>
+
+      <nav class="outline" aria-label="On this page">
+        <p class="label">Contents</p>
+        <ul>
+          {
+            tree.map((heading) => (
+              <li>
+                <a class="h2" href={`#${heading.slug}`} data-outline={heading.slug}>
+                  {heading.text}
+                </a>
+                {heading.children.length > 0 && (
+                  <ul>
+                    {heading.children.map((child) => (
+                      <li>
+                        <a class="h3" href={`#${child.slug}`} data-outline={child.slug}>
+                          {child.text}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))
+          }
+        </ul>
+      </nav>
+    </aside>
+
+    <main class="prose">
+      <slot />
+    </main>
+
+    <aside class="rail" aria-label="Page actions">
+      <p class="label">This page</p>
+      <a href={editUrl} target="_blank" rel="noopener noreferrer">Edit on GitHub</a>
+      <a href="/play">Open the playground</a>
+      <a href={current === 'docs' ? '/spec' : '/docs'}>
+        {current === 'docs' ? 'Read the specification' : 'Read the guide'}
+      </a>
+      <p class="rail-note">
+        This page is <code class="inline">{sourceFile}</code> from the repository, rendered. The file
+        is the source of truth.
+      </p>
+    </aside>
+  </div>
+
+  <Footer />
+</Base>
+
+<script>
+  // Mark the section being read. Rendering a whole README as one page makes the outline the only
+  // sense of place there is, so it has to keep up with the scroll.
+  const links = new Map<string, Element>();
+  for (const link of document.querySelectorAll('[data-outline]')) {
+    const slug = link.getAttribute('data-outline');
+    if (slug) links.set(slug, link);
+  }
+
+  const seen = new Set<string>();
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) seen.add(entry.target.id);
+        else seen.delete(entry.target.id);
+      }
+
+      // The topmost heading currently on screen wins; if none is, the last one scrolled past
+      // keeps the mark rather than leaving nothing lit.
+      const order = [...links.keys()];
+      const active = order.find((slug) => seen.has(slug));
+      if (!active) return;
+      for (const [slug, link] of links) link.classList.toggle('current', slug === active);
+    },
+    { rootMargin: '0px 0px -70% 0px' },
+  );
+
+  for (const slug of links.keys()) {
+    const heading = document.getElementById(slug);
+    if (heading) observer.observe(heading);
+  }
+</script>
+
+<style>
+  .shell {
+    display: grid;
+    grid-template-columns: 15.375rem minmax(0, 1fr) 13rem;
+    gap: 3.25rem;
+    max-width: 90rem;
+    margin-inline: auto;
+    padding: 2.75rem var(--gutter) 4rem;
+    align-items: start;
+  }
+
+  .sidebar,
+  .rail {
+    position: sticky;
+    top: 1.5rem;
+    max-height: calc(100dvh - 3rem);
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 1.625rem;
+  }
+
+  .label {
+    margin: 0 0 0.4375rem;
+  }
+
+  .doc {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.3125rem 0;
+    font-size: 0.9063rem;
+    color: var(--dim);
+  }
+
+  .doc.active {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .doc-note {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    color: var(--muted);
+  }
+
+  .outline ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .outline ul ul {
+    padding-left: 0.8125rem;
+    border-left: 1px solid var(--border);
+    margin: 0.125rem 0 0.375rem 0.125rem;
+  }
+
+  .outline a {
+    display: block;
+    padding: 0.1875rem 0;
+    font-size: 0.9063rem;
+    line-height: 1.4;
+    color: var(--dim);
+    text-wrap: pretty;
+  }
+
+  .outline a.h3 {
+    font-size: 0.8438rem;
+    color: var(--muted);
+  }
+
+  .outline a.current {
+    color: var(--gold);
+    font-weight: 600;
+  }
+
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5625rem;
+  }
+
+  .rail a {
+    font-size: 0.8438rem;
+    color: var(--muted);
+  }
+
+  .rail a:hover {
+    color: var(--gold);
+  }
+
+  .rail-note {
+    margin: 0.75rem 0 0;
+    padding-top: 0.875rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.7813rem;
+    line-height: 1.55;
+    color: var(--muted);
+    text-wrap: pretty;
+  }
+
+  @media (max-width: 1200px) {
+    .shell {
+      grid-template-columns: 14rem minmax(0, 1fr);
+    }
+
+    .rail {
+      display: none;
+    }
+  }
+
+  @media (max-width: 860px) {
+    .shell {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 2rem;
+    }
+
+    .sidebar {
+      position: static;
+      max-height: none;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+  }
+</style>
+
+<style is:global>
+  /* --- rendered markdown ------------------------------------------------------------------ */
+
+  .prose {
+    max-width: 48rem;
+    font-size: 1.0313rem;
+    line-height: 1.72;
+    color: var(--text);
+  }
+
+  .prose > :first-child {
+    margin-top: 0;
+  }
+
+  .prose h1 {
+    font-size: clamp(2.25rem, 5vw, 2.875rem);
+    margin-bottom: 1.5rem;
+  }
+
+  .prose h2 {
+    font-size: 1.75rem;
+    letter-spacing: -0.026em;
+    margin: 3.25rem 0 1rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .prose h3 {
+    font-size: 1.3125rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 2.25rem 0 0.75rem;
+  }
+
+  .prose h4 {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    margin: 1.75rem 0 0.5rem;
+  }
+
+  .prose p,
+  .prose li {
+    text-wrap: pretty;
+  }
+
+  .prose p {
+    margin: 0 0 1.125rem;
+  }
+
+  .prose ul,
+  .prose ol {
+    margin: 0 0 1.125rem;
+    padding-left: 1.375rem;
+  }
+
+  .prose li {
+    margin-bottom: 0.5rem;
+  }
+
+  .prose li::marker {
+    color: var(--muted);
+  }
+
+  .prose strong {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .prose hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 2.5rem 0;
+  }
+
+  .prose blockquote {
+    margin: 0 0 1.125rem;
+    padding: 0.875rem 1.25rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--dim);
+  }
+
+  .prose blockquote p:last-child {
+    margin-bottom: 0;
+  }
+
+  /* Inline code follows the page theme; a fenced block keeps the dark code palette. */
+  .prose :not(pre) > code {
+    font-family: var(--mono);
+    font-size: 0.875em;
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.0625rem 0.3125rem;
+    color: var(--text);
+  }
+
+  .prose .codeblock {
+    margin: 0 0 1.375rem;
+  }
+
+  /* Headings link to themselves, quietly. */
+  .prose :is(h2, h3, h4) {
+    scroll-margin-top: 1.5rem;
+  }
+
+  /* --- tables ----------------------------------------------------------------------------- */
+
+  .prose table {
+    width: 100%;
+    margin: 0 0 1.375rem;
+    border-collapse: collapse;
+    font-size: 0.9375rem;
+    display: block;
+    overflow-x: auto;
+  }
+
+  .prose th,
+  .prose td {
+    text-align: left;
+    vertical-align: top;
+    padding: 0.5625rem 0.875rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .prose th {
+    font-weight: 600;
+    color: var(--dim);
+    font-size: 0.8125rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  /* README's two-column reference tables have an empty header row; it would otherwise draw a
+     stripe of nothing above every one of them. */
+  .prose thead:has(th:empty) {
+    display: none;
+  }
+
+  .prose td:first-child {
+    white-space: nowrap;
+  }
+
+  .prose td:first-child code {
+    color: var(--gold) !important;
+  }
+</style>

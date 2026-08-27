@@ -8,6 +8,16 @@
 *.md text eol=lf
 *.toml text eol=lf
 *.yml text eol=lf
+# The site's sources. Not for the formatter's sake, since nothing reads these, but so that a
+# Windows checkout and a Linux one hold the same bytes the way the rest of the tree does.
+*.astro text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.mjs text eol=lf
+*.svg text eol=lf
+*.ts text eol=lf
+
 .gitattributes text eol=lf
 .gitignore text eol=lf
 LICENSE-MIT text eol=lf

@@ -1,0 +1,154 @@
+---
+/**
+ * A tot editor: a textarea with a highlighted layer behind it and a gutter beside it.
+ *
+ * Deliberately not a code-editor library. The whole language is a few hundred lines of tokeniser
+ * and the playground's job is to show tot rather than to be an IDE, so the editor is a textarea
+ * with its text made transparent and the same string drawn underneath in colour. The two layers
+ * share every metric that affects layout, which is what keeps the caret on the glyph.
+ */
+interface Props {
+  id: string;
+  name: string;
+  badge?: string;
+  /** The dialect decides whether parens are forms or ordinary bareword characters. */
+  dialect?: 'tot' | 'tott';
+}
+
+const { id, name, badge, dialect = 'tot' } = Astro.props;
+---
+
+<div class="editor" data-editor={id} data-dialect={dialect}>
+  <div class="pane-bar">
+    <span class="pane-name" data-editor-name>{name}</span>
+    {badge && <span class="badge" data-editor-badge>{badge}</span>}
+    <span class="pane-stat" data-editor-stat></span>
+  </div>
+
+  <div class="body">
+    <pre class="gutter" aria-hidden="true" data-editor-gutter>1</pre>
+    <div class="scroll">
+      <pre class="highlight" aria-hidden="true" data-editor-highlight></pre>
+      <textarea
+        class="input"
+        data-editor-input
+        id={id}
+        wrap="off"
+        spellcheck="false"
+        autocapitalize="off"
+        autocorrect="off"
+        aria-label={name}></textarea>
+    </div>
+  </div>
+</div>
+
+<style>
+  .editor {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    background: var(--code-bg);
+  }
+
+  .pane-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.625rem 1.375rem;
+    border-bottom: 1px solid var(--code-border);
+    flex-shrink: 0;
+  }
+
+  .pane-name {
+    font-family: var(--mono);
+    font-size: 0.7813rem;
+    color: var(--tk);
+  }
+
+  .badge {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    color: var(--code-muted);
+    border: 1px solid var(--code-border);
+    border-radius: 999px;
+    padding: 0.125rem 0.5rem;
+  }
+
+  .pane-stat {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 0.7188rem;
+    color: var(--code-muted);
+  }
+
+  .body {
+    display: flex;
+    flex-grow: 1;
+    min-height: 0;
+    padding-top: 1rem;
+  }
+
+  /* Every metric here has a twin in .highlight and .input. Changing one alone puts the caret in
+     the wrong place, so they are kept adjacent. */
+  .gutter,
+  .highlight,
+  .input {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    line-height: 1.85;
+    tab-size: 2;
+    white-space: pre;
+    overflow-wrap: normal;
+    border: 0;
+  }
+
+  .gutter {
+    flex-shrink: 0;
+    overflow: hidden;
+    padding: 0 0.75rem 0 1.375rem;
+    text-align: right;
+    color: var(--hairline);
+    user-select: none;
+  }
+
+  .scroll {
+    position: relative;
+    flex-grow: 1;
+    min-width: 0;
+  }
+
+  .highlight,
+  .input {
+    position: absolute;
+    inset: 0;
+    padding: 0 1.375rem 1rem 0;
+  }
+
+  .highlight {
+    overflow: hidden;
+    pointer-events: none;
+    color: var(--tk);
+  }
+
+  .input {
+    width: 100%;
+    height: 100%;
+    resize: none;
+    overflow: auto;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--ts);
+    outline: none;
+  }
+
+  .input::selection {
+    background: rgb(242 185 80 / 25%);
+    color: transparent;
+  }
+
+  .input:focus-visible {
+    outline: none;
+  }
+</style>

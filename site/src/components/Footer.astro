@@ -1,0 +1,156 @@
+---
+import TotMark from './TotMark.astro';
+
+interface Props {
+  /** The landing page carries the closing call to action; inner pages just get the rule. */
+  cta?: boolean;
+}
+
+const { cta = false } = Astro.props;
+---
+
+<footer class:list={['footer', { grain: cta }]}>
+  <div class="wrap inner">
+    {
+      cta && (
+        <div class="cta">
+          <div class="cta-copy">
+            <h2>Paste in a JSON file and see it without the punctuation.</h2>
+            <div class="cta-row">
+              <a class="btn btn-primary" href="/play">
+                Open the playground
+              </a>
+              <span class="cta-note">runs entirely in your browser</span>
+            </div>
+          </div>
+          <TotMark size={150} class="cta-mark" />
+        </div>
+      )
+    }
+
+    <div class="bottom">
+      <div class="left">
+        <TotMark size={26} />
+        <span class="wordmark">tot</span>
+        <span class="licence">MIT / Apache-2.0</span>
+      </div>
+      <nav class="links" aria-label="Footer">
+        <a href="/docs">Docs</a>
+        <a href="/spec">Spec</a>
+        <a href="/play">Playground</a>
+        <a href="https://github.com/totlang/tot" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a
+          href="https://github.com/totlang/tot/releases"
+          target="_blank"
+          rel="noopener noreferrer">Releases</a
+        >
+      </nav>
+    </div>
+  </div>
+</footer>
+
+<style>
+  .footer {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 4.75rem var(--gutter) 2.75rem;
+  }
+
+  .footer:not(.grain) {
+    padding-top: 2.5rem;
+    background: transparent;
+  }
+
+  .inner {
+    display: flex;
+    flex-direction: column;
+    gap: 3.25rem;
+  }
+
+  .cta {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 3rem;
+  }
+
+  .cta-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    max-width: 39rem;
+  }
+
+  .cta h2 {
+    font-size: clamp(1.75rem, 3.4vw, 2.625rem);
+    line-height: 1.08;
+  }
+
+  .cta-row {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    flex-wrap: wrap;
+  }
+
+  .cta-note {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+
+  .bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2.5rem;
+    padding-top: 1.875rem;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+
+  .left {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+  }
+
+  .wordmark {
+    font-family: var(--disp);
+    font-size: 1.125rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--dim);
+  }
+
+  .licence {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-left: 0.5rem;
+  }
+
+  .links {
+    display: flex;
+    align-items: center;
+    gap: 1.75rem;
+    flex-wrap: wrap;
+  }
+
+  .links a {
+    font-size: 0.875rem;
+    color: var(--muted);
+  }
+
+  @media (max-width: 760px) {
+    .cta {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2rem;
+    }
+
+    .cta-mark {
+      align-self: center;
+    }
+  }
+</style>

@@ -1,0 +1,20 @@
+{
+  "name": "tot-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "wasm": "wasm-pack build wasm --target web --release --out-dir ../src/wasm --out-name tot",
+    "dev": "astro dev",
+    "build": "npm run wasm && astro build --force",
+    "build:site": "astro build --force",
+    "preview": "astro preview",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "^3.7.3",
+    "astro": "^5.14.1",
+    "shiki": "^3.13.0",
+    "unist-util-visit": "^5.0.0"
+  }
+}

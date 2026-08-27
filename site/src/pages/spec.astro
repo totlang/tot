@@ -1,0 +1,20 @@
+---
+import { getEntry, render } from 'astro:content';
+
+import Prose from '../layouts/Prose.astro';
+
+const entry = await getEntry('docs', 'spec');
+if (!entry) throw new Error('SPEC.md was not found at the repository root');
+const { Content, headings } = await render(entry);
+---
+
+<Prose
+  title="Specification — tot"
+  description="The tot language definition: lexical structure, grammar, canonical form, interop, and the composition design."
+  section="Spec"
+  current="spec"
+  sourceFile="SPEC.md"
+  headings={headings}
+>
+  <Content />
+</Prose>
