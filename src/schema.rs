@@ -281,10 +281,15 @@ impl Type {
                     return Err(Violation::new(path, format!("`{name}` is listed twice")));
                 }
                 Some(scalar) => scalars.push(scalar),
-                // An empty alternative has no name to quote, so naming the `|` is the only
-                // way to say what went wrong.
+                // An empty alternative has no name to quote, so the `|` beside it is the only
+                // thing left to name — unless there is no `|`, where blaming one would send
+                // the reader looking for punctuation the schema does not contain.
                 None if name.is_empty() => {
-                    return Err(Violation::new(path, "a `|` needs a type on both sides")
+                    let message = match text.contains('|') {
+                        true => "a `|` needs a type on both sides",
+                        false => "a type name cannot be empty",
+                    };
+                    return Err(Violation::new(path, message)
                         .with_help("the types are any, string, int, float, bool, and null"));
                 }
                 None => {

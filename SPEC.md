@@ -67,9 +67,17 @@ worth spending an error message on.
 
 ```
 token    = STRING | BAREWORD | "{" | "}" | "[" | "]"
-BAREWORD = 1*( any Unicode scalar except whitespace and , : " { } [ ] # = )
+BAREWORD = 1*( any Unicode scalar except whitespace, control characters, and , : " { } [ ] # = )
 STRING   = single-line-string | multi-line-string
 ```
+
+**A literal control character (`U+0000`–`U+001F`) is excluded for the same reason a string
+excludes one.** A key is a string that happens to be written without quotes, so a character no
+string may hold is not one a key may hold either; without the rule a bare key could carry a raw
+`U+0001` that the same document could not write between quotes, and every emitter — which asks
+one shared predicate for whether a key needs quoting — would write it straight back out
+unquoted. Escaped in a quoted key it is an ordinary character: `"a\u0001b"`. This costs goal #2
+nothing, since JSON forbids the same characters and a JSON key is always quoted.
 
 Tokens are self-delimiting: `a"b"` is two tokens and `a{b 1}` is three. `tot fmt` inserts the
 spaces you'd expect; the parser does not require them.
@@ -276,6 +284,11 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
 - Two-space indent, LF endings, trailing newline. LF is part of the canonical form, so a CRLF
   file is an unformatted one: `fmt` rewrites it and `fmt --check` reports it. A repository
   whose checkout converts line endings has to pin `.tot` to LF, or `--check` can never pass.
+  - **No byte-order mark**, for the same reason and with the same consequence: `fmt` drops one
+    and `fmt --check` reports a file that has one. The mark is skipped everywhere else — it is
+    not part of the first key, and it occupies no column in a diagnostic — but it is not part
+    of the canonical form either, and an editor that writes one leaves a file that looks
+    already-formatted and is not.
 - `,` and `:` deleted.
 - Keys eagerly unquoted wherever legal: `"address"` → `address`. Pasted JSON is rewritten
   into tot on first format; that's the point.
@@ -481,6 +494,11 @@ are all the same in both, because they are the same code.
   - **The third argument is evaluated only on a miss**, the way a `param`'s default is evaluated
     only when the parameter was not set. It is the only way to reach a member that may be
     absent, since `if` requires a boolean and there is no `has`.
+  - **A miss is a member that is not there or an index past the end, and nothing else.** A step
+    that runs into the wrong *kind* of value — `listen` being an integer where the path expects
+    an object — is the document being shaped differently than the template thinks, which is a
+    template bug and stays a build failure whether a default was written or not. A default is
+    for a member that may be absent, not for a path that may be wrong.
 - **`map` evaluates its body once per element**, and `(it)` is the element. The list argument has
   to be an array: mapping an object would need a spelling for the key as well as the value, and
   `(it)` is one thing.
@@ -507,10 +525,21 @@ are all the same in both, because they are the same code.
   already built, and reading one in the template dialect would report its parens as forms,
   which is a confusing way to say "wrong file". Any other name is taken at its word, since
   asking to build a file says what it is.
-- `--out` may not name the template being built. Writing over the file being read loses it,
-  and there is nothing to recover it from.
+- `--out` may not name the template being built, **nor any file it imports**. Writing over a
+  file being read loses it, and there is nothing to recover it from; a fragment is as much a
+  file being read as the template is. The template is refused before anything is read, and an
+  import once the build has run and named what it loaded.
 - `--set=N=V` needs a value: nothing at all is not a tot value, and reading it as the empty
-  object is not what a trailing `=` can have meant. `--set-raw=N=` is the empty string.
+  object is not what a trailing `=` can have meant. `--set-raw=N=` is the empty string. The
+  same refusal applies to `tot set`, where `--raw` is the same way out — an empty argument
+  means the empty string or it means nothing, and it does not mean `{}`.
+- **A parameter set twice is refused**, whichever of `--set` and `--set-raw` set it. Picking
+  the last is the resolution the language declines to make for a duplicate key, and a command
+  line assembled from two places is where that most easily goes unnoticed.
+- **An extension is read case-insensitively.** Windows filenames are, so `CONFIG.TOT` and
+  `config.tot` name one file there and must not be two kinds of input depending on which
+  spelling reached the command line. Folding on every platform beats folding on one: a rule
+  that holds only on some machines is worse than either answer.
 - With no `--out` the document goes to stdout, so a build composes with the rest of the CLI.
   `--check` builds and compares against the document on disk, defaulting to the template's own
   name with the extra `t` removed. That is the real prize: CI verifies that the committed
@@ -592,6 +621,9 @@ index   = "[" [0-9]+ "]"
 - `set` takes a value spelled the way `get` prints one, so the two round-trip: a brace-less
   `host "::" port 80` is an object here exactly as it is at the top of a file. A string
   therefore needs its quotes, and `--raw` is the way out of typing them.
+  - An **empty** VALUE is refused. Parsing nothing succeeds — an empty document is the empty
+    object — so without the refusal `tot set a ""` would quietly write `a {}`, which is not
+    what an empty argument can have meant. `tot set --raw a ""` is the empty string.
   - The **last** step may name something new — adding a member is what setting is for. Every
     step before it has to exist, unless `--create` says to build the objects on the way. That
     is the default because a mistyped path is far likelier than a genuinely missing branch,

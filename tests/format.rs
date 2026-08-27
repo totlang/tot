@@ -320,6 +320,20 @@ fn invalid_documents_are_refused() {
     assert!(format("a 1 a 2").is_err());
 }
 
+/// Every emitter asks the same predicate for whether a key can go bare, so a character the
+/// language will not read back unquoted must not be written unquoted either. `from json` used
+/// to put a raw `U+0001` straight into a bare key.
+#[test]
+fn a_key_holding_a_control_character_is_quoted() {
+    let escaped = "\"a\\u0001b\" 1";
+    let value = parse(escaped).expect("legal as an escape");
+
+    assert_eq!(format_value(&value), escaped.to_owned() + "\n");
+    // The proof that it has to be quoted: what the emitter wrote reads back as the same value.
+    assert_eq!(parse(&format_value(&value)).unwrap(), value);
+    assert_eq!(f(escaped), escaped.to_owned() + "\n");
+}
+
 // --- templates ------------------------------------------------------------------------------
 
 /// The template fixture check, owing the same two properties `f` does — except that a template

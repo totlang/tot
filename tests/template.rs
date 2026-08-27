@@ -690,6 +690,39 @@ fn get_takes_a_default_only_on_a_miss() {
     );
 }
 
+/// A default answers "there is nothing there" and only that.
+///
+/// A step that ran into the wrong *kind* of value is the imported document being shaped
+/// differently than this template expects — a template bug, and the one thing a build is for.
+/// Defaulting past it reports success and writes the fallback.
+#[test]
+fn a_get_default_does_not_hide_a_shape_mismatch() {
+    // The two ways a document can simply not answer: no such member, and past the end.
+    assert_eq!(
+        plain(r#"a (get "listen.port" {listen {}} 8080)"#).unwrap(),
+        r#"{"a":8080}"#
+    );
+    assert_eq!(
+        plain(r#"a (get "xs[9]" {xs [1]} 0)"#).unwrap(),
+        r#"{"a":0}"#
+    );
+
+    // Neither of these is a miss, so neither takes the default.
+    for (src, expected) in [
+        (
+            r#"a (get "listen.port" {listen 5} 8080)"#,
+            "cannot look up `port`: `listen` is an integer, not an object",
+        ),
+        (
+            r#"a (get "xs[0]" {xs {a 1}} 0)"#,
+            "cannot take element 0 of `xs`: it is an object, not an array",
+        ),
+    ] {
+        let message = fails(src);
+        assert!(message.contains(expected), "`{src}`: {message}");
+    }
+}
+
 /// Without a default a miss is a build failure, carrying the diagnostic `tot get` gives —
 /// which names what *was* there, spelled the way a path spells it.
 #[test]

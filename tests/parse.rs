@@ -104,6 +104,32 @@ fn a_leading_byte_order_mark_is_skipped() {
     assert_eq!(j("\u{feff}a 1"), r#"{"a":1}"#);
 }
 
+/// A key is a string that happens to be written without quotes, so it may not hold a character
+/// a string may not hold. Left legal, a bare key could carry a raw `U+0001` the same document
+/// could not write between quotes — and every emitter asks the same predicate, so `from json`
+/// wrote one straight back out unquoted.
+#[test]
+fn a_control_character_is_not_a_bareword_character() {
+    let message = err("a\u{1}b 1");
+    assert!(
+        message.contains("literal control character U+0001"),
+        "{message}"
+    );
+    assert!(message.contains("quote the key"), "{message}");
+
+    // In value position, and standing alone between two tokens.
+    assert!(err("a \u{1}").contains("U+0001"));
+    assert!(err("a 1 \u{2} b 2").contains("U+0002"));
+
+    // `U+000B` and `U+000C` are control characters that are also whitespace. A string calls
+    // them control characters, so a bareword does too rather than blaming the whitespace rule.
+    assert!(err("a\u{b}b 1").contains("literal control character U+000B"));
+    assert!(err("a\u{c}b 1").contains("literal control character U+000C"));
+
+    // Escaped, it is an ordinary key — this is the spelling the diagnostic asks for.
+    assert_eq!(j(r#""a\u0001b" 1"#), "{\"a\\u0001b\":1}");
+}
+
 /// It is skipped for diagnostics too, and has to be: a mark that renders as nothing at all must
 /// not occupy a column, or every caret on the first line lands one place to the right of what
 /// it points at.

@@ -100,22 +100,55 @@ impl Path {
     /// assert_eq!(e.message, "no member `prot` in `listen`");
     /// ```
     pub fn get<'v>(&self, document: &'v Value) -> Result<&'v Value, Error> {
+        match self.resolve(document) {
+            Found::Value(value) => Ok(value),
+            Found::Absent(error) | Found::Wrong(error) => Err(error),
+        }
+    }
+
+    /// Look this path up, telling *nothing there* apart from *the wrong shape*.
+    ///
+    /// `Ok(None)` is a member the object does not have or an index past the end of an array:
+    /// the two ways a document can simply not answer. `Err` is a step that ran into the wrong
+    /// **kind** of value, which is a different problem — the document is not shaped the way
+    /// the caller thought, and a caller with a fallback should not quietly use it for that.
+    ///
+    /// ```
+    /// let doc = tot::parse("listen {port 8080}").unwrap();
+    ///
+    /// // Absent: the object simply has no `tls`.
+    /// assert!(tot::Path::parse("listen.tls").unwrap().find(&doc).unwrap().is_none());
+    ///
+    /// // Wrong shape: `port` is an integer, so looking inside it is a mistake, not a miss.
+    /// assert!(tot::Path::parse("listen.port.x").unwrap().find(&doc).is_err());
+    /// ```
+    pub fn find<'v>(&self, document: &'v Value) -> Result<Option<&'v Value>, Error> {
+        match self.resolve(document) {
+            Found::Value(value) => Ok(Some(value)),
+            Found::Absent(_) => Ok(None),
+            Found::Wrong(error) => Err(error),
+        }
+    }
+
+    /// The one walk both of the above read, so they cannot drift apart on what they find or on
+    /// what they call it.
+    fn resolve<'v>(&self, document: &'v Value) -> Found<'v> {
         let mut current = document;
         for (i, segment) in self.segments.iter().enumerate() {
             current = match (&segment.step, current) {
                 (Step::Key(key), Value::Object(map)) => match map.get(key) {
                     Some(value) => value,
-                    None => return Err(self.no_member(i, key, map)),
+                    None => return Found::Absent(self.no_member(i, key, map)),
                 },
-                (Step::Key(key), other) => return Err(self.not_an_object(i, key, other)),
+                (Step::Key(key), other) => return Found::Wrong(self.not_an_object(i, key, other)),
                 (Step::Index(n), Value::Array(items)) => match items.get(*n) {
                     Some(value) => value,
-                    None => return Err(self.out_of_range(i, *n, items.len())),
+                    None => return Found::Absent(self.out_of_range(i, *n, items.len())),
                 },
-                (Step::Index(n), other) => return Err(self.not_an_array(i, *n, other)),
+                (Step::Index(n), other) => return Found::Wrong(self.not_an_array(i, *n, other)),
             };
         }
-        Ok(current)
+        Found::Value(current)
     }
 
     /// The value at this path, for changing it in place.
@@ -311,6 +344,15 @@ impl Path {
             _ => error,
         }
     }
+}
+
+/// What a lookup ran into, keeping the diagnostic either way.
+enum Found<'v> {
+    Value(&'v Value),
+    /// Nothing at this path, which is a fact about the document.
+    Absent(Error),
+    /// A step hit the wrong kind of value, which is a fact about the path.
+    Wrong(Error),
 }
 
 /// Whether [`Path::set`] may build the objects on the way to its destination.

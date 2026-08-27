@@ -240,6 +240,11 @@ fn a_schema_that_is_not_a_schema_is_refused() {
         (r#"a "int|int""#, "listed twice"),
         (r#"a "int|nope""#, "is not a type"),
         (r#"a "int|""#, "needs a type on both sides"),
+        (r#"a "|int""#, "needs a type on both sides"),
+        // No `|` anywhere, so blaming one sends the reader hunting for punctuation that is
+        // not in the file.
+        (r#"a """#, "a type name cannot be empty"),
+        (r#"a {b ""}"#, "a type name cannot be empty"),
     ] {
         let e = Schema::parse(schema).expect_err(schema);
         assert!(e.message.contains(expected), "`{schema}`: {}", e.message);

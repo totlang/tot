@@ -37,6 +37,34 @@ fn fails(path: &str) -> String {
 
 // --- finding things -----------------------------------------------------------------------
 
+/// `find` tells *nothing there* apart from *the wrong shape*, which `get` deliberately does
+/// not: a caller with a fallback should use it for the first and never for the second.
+#[test]
+fn find_tells_absent_from_the_wrong_shape() {
+    let document = parse(DOC);
+    let find = |text: &str| Path::parse(text).unwrap().find(&document);
+
+    // There.
+    assert!(find("listen.port").unwrap().is_some());
+    // Not there: a member the object does not have, and an index past the end.
+    assert_eq!(find("listen.tls").unwrap(), None);
+    assert_eq!(find("regions[9]").unwrap(), None);
+    // Not a miss: the step ran into the wrong kind of value, which is the path being wrong
+    // about the document rather than the document being short of something.
+    assert!(find("listen.port.deeper").is_err());
+    assert!(find("listen[0]").is_err());
+
+    // Both still fail through `get`, which is what reports a miss with its own diagnostic.
+    for text in [
+        "listen.tls",
+        "regions[9]",
+        "listen.port.deeper",
+        "listen[0]",
+    ] {
+        assert!(Path::parse(text).unwrap().get(&document).is_err(), "{text}");
+    }
+}
+
 #[test]
 fn a_member_is_found() {
     assert_eq!(get("name").unwrap(), "\"svc\"");

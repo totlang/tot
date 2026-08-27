@@ -53,6 +53,11 @@ impl Dialect {
         match c {
             ',' | ':' | '"' | '{' | '}' | '[' | ']' | '#' | '=' => false,
             '(' | ')' => self == Dialect::Data,
+            // A literal control character is refused inside a string, and a key is a string —
+            // it just happens to be one written without quotes. Allowing it here let a key
+            // hold a raw `U+0001` that the same document could not write between quotes, and
+            // let every emitter put one back out unquoted, since they all ask this predicate.
+            c if is_control(c) => false,
             c => !c.is_whitespace(),
         }
     }
@@ -191,6 +196,10 @@ impl<'a> Lexer<'a> {
                         self.pos += c.len_utf8();
                     }
                 }
+                // Before the whitespace arm, so that U+000B and U+000C — which are both — are
+                // named the way a string names them. A bareword cannot hold one of these, so
+                // the lexer would otherwise stop dead at it and emit a token of no width.
+                c if is_control(c) => return Err(control_char_outside_string(self.pos, c)),
                 // Absorbing U+00A0 and friends into a bareword would be a silent surprise.
                 c if c.is_whitespace() => {
                     let span = Span::new(self.pos, self.pos + c.len_utf8());
@@ -374,12 +383,33 @@ fn unterminated_block(start: usize) -> Error {
     .with_help("expected a closing `\"\"\"` preceded only by whitespace on its line")
 }
 
+/// A character tot never holds literally. JSON forbids these inside a string, and tot forbids
+/// them in a bareword for the same reason plus one of its own: a key is a string that happens
+/// to be written without quotes, so the same key must not be legal one way and refused the
+/// other. Every emitter asks [`can_be_bare`], so this is also what stops one being written back
+/// out raw.
+fn is_control(c: char) -> bool {
+    (c as u32) < 0x20
+}
+
 fn control_char_error(pos: usize, c: char) -> Error {
     Error::new(
         Span::new(pos, pos + c.len_utf8()),
         format!("literal control character U+{:04X} in string", c as u32),
     )
     .with_help("write it as an escape")
+}
+
+fn control_char_outside_string(pos: usize, c: char) -> Error {
+    Error::new(
+        Span::new(pos, pos + c.len_utf8()),
+        format!("literal control character U+{:04X}", c as u32),
+    )
+    .with_help(format!(
+        "a control character is not a bareword character; quote the key and escape it, \
+         as in `\"a\\u{:04x}b\"`",
+        c as u32
+    ))
 }
 
 /// Consumes one escape sequence and appends its value. On entry `*pos` is at the backslash.

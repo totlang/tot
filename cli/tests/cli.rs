@@ -28,6 +28,19 @@ impl TempDir {
     fn file(&self, name: &str) -> PathBuf {
         self.0.join(name)
     }
+
+    /// The directory itself, for running the binary from inside it — which is how a test gives
+    /// it relative paths, and the only way to exercise how it names them.
+    fn path(&self) -> &Path {
+        &self.0
+    }
+
+    /// A subdirectory, created.
+    fn dir(&self, name: &str) -> PathBuf {
+        let path = self.0.join(name);
+        std::fs::create_dir_all(&path).expect("create subdirectory");
+        path
+    }
 }
 
 impl Drop for TempDir {
@@ -619,6 +632,187 @@ fn the_example_template_still_builds_its_document() {
         "",
     );
     assert_eq!(out.code, 0, "{}", out.stderr);
+}
+
+/// Two files whose absolute paths differ only *after* a shared run of characters are two
+/// files.
+///
+/// The name a build gives a file is the import cache's key, the cycle detector's key, and the
+/// directory further imports resolve against. Trimming the working directory off as text rather
+/// than by path component made `<tmp>/subx.tot` come back as `x.tot` — the same name as
+/// `<tmp>/sub/x.tot` — so the second import silently answered with the first file's value.
+#[test]
+fn two_files_that_share_a_path_prefix_are_two_files() {
+    let dir = TempDir::new("import-prefix");
+    let sub = dir.dir("sub");
+
+    std::fs::write(sub.join("x.tot"), "which \"inner\"\n").expect("write");
+    // A sibling of `sub` whose path starts with `sub`'s spelling and then keeps going.
+    std::fs::write(dir.file("subx.tot"), "which \"outer\"\n").expect("write");
+    std::fs::write(
+        sub.join("c.tott"),
+        "a (import \"x.tot\")\nb (import \"../subx.tot\")\n",
+    )
+    .expect("write");
+
+    let out = run_in(Some(&sub), &["build", "c.tott"], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        json(&out.stdout).trim_end(),
+        r#"{"a":{"which":"inner"},"b":{"which":"outer"}}"#
+    );
+}
+
+/// An import resolves relative to the file that wrote it — at every step of a chain, and
+/// whatever directory the build was started from.
+#[test]
+fn imports_resolve_relative_to_each_importing_file() {
+    let dir = TempDir::new("import-relative");
+    let deep = dir.dir("a").join("b");
+    std::fs::create_dir_all(&deep).expect("create b");
+
+    std::fs::write(deep.join("leaf.tot"), "leaf 1\n").expect("write");
+    // `leaf.tot` sits beside `mid.tott`, not beside the working directory below.
+    std::fs::write(deep.join("mid.tott"), "m (import \"leaf.tot\")\n").expect("write");
+    std::fs::write(dir.file("top.tott"), "t (import \"a/b/mid.tott\")\n").expect("write");
+
+    let out = run_in(Some(&dir.dir("a")), &["build", "../top.tott"], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(json(&out.stdout).trim_end(), r#"{"t":{"m":{"leaf":1}}}"#);
+}
+
+/// `--out` may not name a fragment the template imports. The template itself is refused before
+/// anything is read; a fragment is only known once the build has run, but it is a file being
+/// read just the same, and there is nothing to recover it from either.
+#[test]
+fn out_may_not_be_a_file_the_template_imports() {
+    let dir = TempDir::new("build-out-import");
+    let fragment = dir.file("frag.tot");
+    std::fs::write(&fragment, "[\"eu\" \"us\"]\n").expect("write");
+    std::fs::write(dir.file("t.tott"), "regions (import \"frag.tot\")\n").expect("write");
+
+    let out = run_in(Some(dir.path()), &["build", "--out=frag.tot", "t.tott"], "");
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(
+        out.stderr.contains("is a file this template imports"),
+        "{}",
+        out.stderr
+    );
+
+    // Reached by a different spelling, it is still the same file and still refused.
+    let out = run_in(
+        Some(dir.path()),
+        &["build", "--out=./frag.tot", "t.tott"],
+        "",
+    );
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(
+        std::fs::read_to_string(&fragment).expect("read"),
+        "[\"eu\" \"us\"]\n",
+        "the fragment was written over"
+    );
+}
+
+/// A diagnostic that recommends a command line is documentation, and documentation that can be
+/// executed should be. This one dropped the parameters it had been given, so the command it
+/// printed described a *different* build — and where every parameter has a default, running it
+/// succeeded and wrote that different document over the one just checked.
+#[test]
+fn the_check_message_names_a_command_that_rebuilds_the_same_document() {
+    let dir = TempDir::new("build-check-command");
+    // A default, so the printed command cannot fail its way out of being wrong.
+    std::fs::write(dir.file("c.tott"), "tag (param \"tag\" \"dev\")\n").expect("write");
+    std::fs::write(dir.file("c.tot"), "tag \"drifted\"\n").expect("write");
+
+    let check = ["build", "--check", "--set-raw=tag=v1.4.2", "c.tott"];
+    let out = run_in(Some(dir.path()), &check, "");
+    assert_eq!(out.code, 1, "{}", out.stderr);
+
+    // Take the command the tool printed, verbatim, and run it.
+    let printed = out
+        .stderr
+        .split('`')
+        .nth(1)
+        .expect("a command in backticks");
+    let words: Vec<&str> = printed.split_whitespace().collect();
+    assert_eq!(words.first().copied(), Some("tot"), "{printed}");
+    let rerun = run_in(Some(dir.path()), &words[1..], "");
+    assert_eq!(rerun.code, 0, "`{printed}`: {}", rerun.stderr);
+
+    // It wrote what `--check` was asking for, parameters and all.
+    assert_eq!(
+        std::fs::read_to_string(dir.file("c.tot")).expect("read"),
+        "tag \"v1.4.2\"\n"
+    );
+    assert_eq!(run_in(Some(dir.path()), &check, "").code, 0);
+}
+
+/// A parameter set twice is refused rather than resolved. tot's most distinctive rule is that
+/// a duplicate key is an error instead of a race the last writer wins, and a command line is
+/// where two places — a shared script and a job override — most easily disagree.
+#[test]
+fn a_parameter_set_twice_is_refused() {
+    let dir = TempDir::new("build-duplicate-set");
+    let template = dir.file("p.tott");
+    std::fs::write(&template, "n (param \"x\")\n").expect("write");
+
+    for pair in [["--set=x=1", "--set=x=2"], ["--set=x=1", "--set-raw=x=2"]] {
+        let out = run(&["build", pair[0], pair[1], arg(&template)], "");
+        assert_eq!(out.code, 2, "{pair:?}: {}", out.stderr);
+        assert!(
+            out.stderr.contains("`x` was set twice"),
+            "{pair:?}: {}",
+            out.stderr
+        );
+    }
+
+    // Two different names are not a duplicate, and one of each is still fine.
+    let out = run(&["build", "--set=x=1", arg(&template)], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "n 1\n");
+}
+
+/// An empty VALUE is not a tot value. Parsing it succeeds — an empty document is the empty
+/// object — so without a refusal `tot set a ""` quietly writes `a {}`. `--set=N=` already
+/// refuses the same input, and the CLI has to agree with itself about what a value is.
+#[test]
+fn set_refuses_an_empty_value() {
+    let out = run(&["set", "a", ""], "a 1\n");
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert!(out.stderr.contains("empty value"), "{}", out.stderr);
+    assert!(out.stderr.contains("--raw"), "{}", out.stderr);
+
+    // `--raw` is the way to say it, and it says the empty string rather than the empty object.
+    let out = run(&["set", "--raw", "a", ""], "a 1\n");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "a \"\"\n");
+}
+
+/// The extension decides what a file is, and on Windows a filename's case does not — so
+/// `CONFIG.TOT` and `config.tot` are one file there and must not be two kinds of input.
+#[test]
+fn an_extension_is_read_whatever_case_it_is_written_in() {
+    let dir = TempDir::new("build-extension-case");
+
+    for name in ["d.tot", "D.TOT", "d.Tot"] {
+        let path = dir.file(name);
+        std::fs::write(&path, "a 1\n").expect("write");
+        let out = run(&["build", arg(&path)], "");
+        assert_eq!(out.code, 2, "{name}: {}", out.stderr);
+        assert!(
+            out.stderr.contains("is a document, not a template"),
+            "{name}: {}",
+            out.stderr
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // And the other direction: an uppercase template is still a template.
+    let template = dir.file("C.TOTT");
+    std::fs::write(&template, "a (str \"x\" 1)\n").expect("write");
+    let out = run(&["build", arg(&template)], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "a \"x1\"\n");
 }
 
 /// `fmt` reads a `.tott` file as a template, the same way `(import …)` decides by extension.

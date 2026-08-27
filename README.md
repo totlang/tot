@@ -182,7 +182,9 @@ Things worth knowing:
   path: those are static because they're the build's inputs, and a path isn't one. Selecting by
   parameter, `(get (param "env") (import "environments.tot"))`, is the ordinary reason to want
   one. The third argument is the only way to reach a member that may be missing, since `if`
-  wants a boolean and there's no `has`.
+  wants a boolean and there's no `has` — but it covers a member that isn't there and an index
+  past the end, and nothing else. A step into the wrong *kind* of value is the document being
+  shaped differently than the template thinks, and stays a failure with or without a default.
 - **`map` needs a placeholder, and `(it)` is a form because everything computed in tot sits
   inside parens.** `_` would have been shorter and would have broken the sentence the paren
   sigil rests on. A `map` may not appear inside another `map`'s *body*, so `(it)` names the
@@ -202,7 +204,11 @@ Things worth knowing:
   depend on who imported it, so a build stays linear in the size of the graph instead of
   exponential in its depth. Sharing a fragment is the ordinary reason to have one.
 - `build` refuses a `.tot` file: a document is already built, and reading one as a template
-  would report its parens as forms. `--out` won't overwrite the template it's building from.
+  would report its parens as forms. Extensions are read case-insensitively, since on Windows
+  `CONFIG.TOT` and `config.tot` are one file. `--out` won't overwrite the template it's
+  building from **or any fragment it imports** — both are files being read, and there's nothing
+  to recover either from. A parameter set twice is refused rather than resolved, the way a
+  duplicate key is.
 - **`tot check` reads templates**, and reading one checks its forms — unknown head, wrong
   argument count, computed `param` name or `import` path. `--strict` applies its one lint too;
   the parity hazard is the language's, and a form is one more value that can land on the wrong

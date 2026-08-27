@@ -40,6 +40,7 @@ FLAGS
     --out=FILE      build: write here instead of stdout
     --set=N=V       build: set parameter N to the tot value V
     --set-raw=N=V   build: set parameter N to the string V, spelled literally
+                    setting one name twice is an error, not a last-one-wins
     --raw           get: print a string with no quotes and no escapes
                     set: take VALUE as a string, spelled literally
     --create        set: build the objects on the way to PATH if they are missing
@@ -95,9 +96,14 @@ TEMPLATES
 
     `get` reads out of a value you hand it and never out of the document being
     built, which would make a template mean something different depending on the
-    order its members were evaluated in. A `map` may not appear inside another
+    order its members were evaluated in. Its third argument covers a member that
+    is not there and an index past the end; a step into the wrong kind of value
+    is a template bug and still fails. A `map` may not appear inside another
     map's body, so `(it)` names the element of exactly one of them and needs no
     shadowing rule; in the list argument it is fine.
+
+    --out may name neither the template nor a fragment it imports: both are
+    files being read, and there is nothing to recover either from.
 
     Parameters come from the command line and nowhere else, so a build is a pure
     function of its inputs. Write --set-raw=env=\"$ENV\" if you want the
@@ -323,6 +329,9 @@ fn build_command(args: &[String]) -> Result<ExitCode, String> {
     let mut check_only = false;
     let mut out: Option<&str> = None;
     let mut params = tot::Params::new();
+    // Kept verbatim so that a diagnostic recommending a rebuild can recommend *this* build.
+    // A suggestion that quietly drops them names a command that produces a different document.
+    let mut given: Vec<&str> = Vec::new();
 
     for flag in flags {
         match flag {
@@ -340,11 +349,15 @@ fn build_command(args: &[String]) -> Result<ExitCode, String> {
                 // The same spelling `tot set` takes, so a value means one thing across the CLI.
                 let value = tot::parse_value(text)
                     .map_err(|e| format!("`--set={name}=…`: `{text}` is not a tot value: {e}"))?;
+                set_once(&params, name)?;
                 params.set(name, value);
+                given.push(flag);
             }
             _ if flag.starts_with("--set-raw=") => {
                 let (name, text) = pair(&flag["--set-raw=".len()..], "--set-raw")?;
+                set_once(&params, name)?;
                 params.set(name, tot::Value::String(text.to_string()));
+                given.push(flag);
             }
             // Each needs its `=` for the reason `--schema` does: bare, the thing after it
             // would be indistinguishable from the template to build.
@@ -402,7 +415,8 @@ fn build_command(args: &[String]) -> Result<ExitCode, String> {
             return Ok(ExitCode::from(1));
         }
     };
-    let document = match template.build(&params, &mut build::Files) {
+    let mut imports = build::Files::default();
+    let document = match template.build(&params, &mut imports) {
         Ok(document) => document,
         Err(e) => {
             eprint!("tot: {}", e.render());
@@ -419,10 +433,33 @@ fn build_command(args: &[String]) -> Result<ExitCode, String> {
                 print!("{built}");
                 Ok(ExitCode::SUCCESS)
             }
-            Some(out) => match std::fs::write(out, &built) {
-                Ok(()) => Ok(ExitCode::SUCCESS),
-                Err(e) => Err(format!("{out}: {e}")),
-            },
+            Some(out) => {
+                // The template is refused up front, before anything is read. A fragment it
+                // imports is only known once the build has run, but it is a file being read
+                // just the same, and writing over one loses it with nothing to recover it from.
+                let target = std::path::Path::new(out);
+                if let Some(clash) = imports
+                    .loaded()
+                    .iter()
+                    .find(|read| build::same_file(target, read))
+                {
+                    // The two spellings are usually the same one, and saying it twice reads
+                    // like a mistake. Name the import only where it was reached differently.
+                    let reached = clash.display().to_string();
+                    let also = match reached == out {
+                        true => String::new(),
+                        false => format!(" (reached as `{reached}`)"),
+                    };
+                    return Err(format!(
+                        "`--out={out}`{also} is a file this template imports, and building \
+                         over it would lose it"
+                    ));
+                }
+                match std::fs::write(out, &built) {
+                    Ok(()) => Ok(ExitCode::SUCCESS),
+                    Err(e) => Err(format!("{out}: {e}")),
+                }
+            }
         };
     }
 
@@ -449,13 +486,32 @@ fn build_command(args: &[String]) -> Result<ExitCode, String> {
     if committed == built {
         return Ok(ExitCode::SUCCESS);
     }
+    // The parameters go back into the suggestion. Without them it names a *different* build —
+    // one that fails outright if a parameter has no default, or, worse, succeeds and writes a
+    // document built from the defaults over the one that was just checked.
+    let flags: String = given.iter().map(|flag| format!(" {flag}")).collect();
     eprintln!(
-        "tot: {} is not what {name} builds — run `tot build --out={} {}`",
+        "tot: {} is not what {name} builds — run `tot build{flags} --out={} {}`",
         path.display(),
         path.display(),
         input
     );
     Ok(ExitCode::from(1))
+}
+
+/// Refuses a parameter that was already set.
+///
+/// tot's most distinctive rule is that a duplicate key is an error rather than a race the last
+/// writer wins, and a parameter set twice on one command line is the same question. Silently
+/// keeping the last is how a shared script and a job override disagree without anyone noticing.
+fn set_once(params: &tot::Params, name: &str) -> Result<(), String> {
+    match params.get(name).is_some() {
+        true => Err(format!(
+            "parameter `{name}` was set twice — tot refuses a duplicate rather than \
+             picking a winner"
+        )),
+        false => Ok(()),
+    }
 }
 
 /// Splits a `name=value` flag argument.
@@ -564,6 +620,14 @@ fn set(args: &[String]) -> Result<ExitCode, String> {
     let value = if raw {
         tot::Value::String(literal.to_string())
     } else {
+        // Nothing at all is not a tot value. Parsing it succeeds — an empty document is the
+        // empty object — so without this, `tot set a ""` quietly writes `a {}`. This is the
+        // same refusal `--set=N=` makes, and `--raw` is the same way out.
+        if literal.is_empty() {
+            return Err(format!(
+                "`tot set {text}` was given an empty value; add `--raw` to set the empty string"
+            ));
+        }
         tot::parse_value(literal)
             .map_err(|e| format!("`{literal}` is not a valid tot value: {e}"))?
     };

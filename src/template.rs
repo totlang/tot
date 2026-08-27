@@ -1082,11 +1082,23 @@ impl<I: Imports> Build<'_, I> {
         })?;
 
         let target = self.node(&form.args[1])?;
-        match path.get(&target) {
-            Ok(value) => Ok(value.clone()),
-            // Only on a miss, the way a `param`'s default is evaluated only when it was not set.
-            Err(_) if form.args.len() > 2 => self.node(&form.args[2]),
-            Err(miss) => Err(self.fail(at(form.args[0].span, miss))),
+
+        // A default answers "there is nothing there" and only that. A step that ran into the
+        // wrong *kind* of value is the document being shaped differently than this template
+        // expects, which is a template bug — defaulting past it would hide the one thing a
+        // build is for.
+        let found = path
+            .find(&target)
+            .map_err(|wrong| self.fail(at(form.args[0].span, wrong)))?;
+        match (found, form.args.get(2)) {
+            (Some(value), _) => Ok(value.clone()),
+            // Evaluated only on a miss, the way a `param`'s default is evaluated only when the
+            // parameter was not set.
+            (None, Some(default)) => self.node(default),
+            (None, None) => {
+                let miss = path.get(&target).expect_err("`find` found nothing here");
+                Err(self.fail(at(form.args[0].span, miss)))
+            }
         }
     }
 
