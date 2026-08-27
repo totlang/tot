@@ -71,7 +71,7 @@ package, or use `--workspace`.
 | | |
 |---|---|
 | `tot fmt [--check] [--template] [FILE]...` | format in place; `--check` writes nothing and exits 1 on a diff |
-| `tot check [--strict] [--schema=F] [FILE]...` | parse and report diagnostics |
+| `tot check [--strict] [--template] [--schema=F] [FILE]...` | parse and report diagnostics |
 | `tot build [--check] [--out=F] [--set=N=V]... FILE` | build a `.tott` template into a document |
 | `tot merge [FILE]...` | fold documents together, left to right |
 | `tot get [--raw] <PATH> [FILE]` | print the one value at PATH |
@@ -180,6 +180,12 @@ Things worth knowing:
   its template, the way `fmt --check` catches formatting.
 - Imports must be **acyclic**, and a failure names the file it happened in plus the chain that
   reached it.
+- **`tot check` reads templates**, and reading one checks its forms — unknown head, wrong
+  argument count, computed `param` name or `import` path. `--strict` applies its one lint too;
+  the parity hazard is the language's, and a form is one more value that can land on the wrong
+  line. **`--schema` against a template is refused**: a schema says what shape a *document* has,
+  and `(param "x")` could be anything until it's built. Build first —
+  `tot build c.tott | tot check --schema=shape.tot` — which is what the error tells you.
 - **`tot fmt` formats templates**, so a `.tott` file is kept honest like everything else here.
   A form is one more bracketed shape with the same rule as a collection — inline vs. block is
   yours, spacing is normalized, nothing is reflowed. The head stays with the opening (`(str`),
@@ -279,6 +285,7 @@ let text  = tot::format_value(&value);            // Value -> tot
 let folded = tot::merge(documents, tot::Nulls::Set);   // or merge_into(&mut base, overlay, …)
 let json  = tot::json::to_string_pretty(&value);
 let warns = tot::lint(src)?;                      // -> Vec<Warning>, all legal-but-risky
+let warns = tot::lint_template(src)?;             // the same, for a .tott source
 let bad   = tot::Schema::parse(shape)?.check(src)?;    // -> Vec<Violation>
 let at    = tot::Path::parse("a.b[0]")?.get(&value)?;
 let v     = tot::parse_value(arg)?;               // text in a value position, not a file
@@ -395,12 +402,9 @@ formatting preserves the parsed value, and formatting is idempotent.
 
 ## Next
 
-`tot merge`, `tot set`, schema validation, the `.tott` template layer, and `tot fmt` for
-templates are built. Still open, in rough order:
+`tot merge`, `tot set`, schema validation, the `.tott` template layer, and `fmt` and `check` for
+templates are all built. Still open, in rough order:
 
-- **`tot check` for templates.** `fmt` reads a `.tott` file now and `build` validates one, so
-  templates aren't unchecked — but `check --strict`'s one lint applies to a template as much as
-  to a document, and it still refuses the file.
 - **`map` and `get` forms.** Deliberately absent — `map` needs a way to write a function in a
   language whose first constraint is that it has none, and `get` needs a decision about what it
   reads from. `merge` was the measurement for whether forms were wanted at all; these two now

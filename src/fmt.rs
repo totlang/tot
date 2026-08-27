@@ -39,12 +39,7 @@ fn format_in(src: &str, dialect: Dialect) -> Result<String, Error> {
     // Validate first, so the tree walk below can assume a well-formed document. Both walks
     // read the same tokens, so the source is lexed once.
     let tokens = crate::lex::tokenize(src, dialect)?;
-    match dialect {
-        Dialect::Data => {
-            crate::parse::from_tokens(src, &tokens)?;
-        }
-        Dialect::Template => crate::template::validate(src, &tokens)?,
-    }
+    crate::parse::validate(src, &tokens, dialect)?;
 
     let document = cst::from_tokens(src, &tokens, dialect)?;
     let mut printer = Printer { out: String::new() };

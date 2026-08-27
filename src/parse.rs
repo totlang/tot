@@ -35,6 +35,18 @@ pub(crate) fn from_tokens(src: &str, tokens: &[Token]) -> Result<Value, Error> {
     Parser::new(src, tokens, Context::Document).document()
 }
 
+/// Checks that already-tokenized source is well formed, in whichever language it is written.
+///
+/// The formatter and the linter each build their own tree afterwards and need to know the
+/// tokens are sound first; this is the one place that knows which parser answers that for
+/// which dialect, so neither of them has to.
+pub(crate) fn validate(src: &str, tokens: &[Token], dialect: Dialect) -> Result<(), Error> {
+    match dialect {
+        Dialect::Data => from_tokens(src, tokens).map(|_| ()),
+        Dialect::Template => crate::template::validate(src, tokens),
+    }
+}
+
 /// Where the text came from. This changes no grammar — only which of two readings of a lone
 /// bareword the diagnostic assumes.
 #[derive(Clone, Copy, PartialEq)]

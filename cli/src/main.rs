@@ -14,7 +14,7 @@ tot — JSON with the punctuation removed
 USAGE
     tot fmt [--check] [--template] [FILE]...
                                   format in place, or stdin to stdout
-    tot check [--strict] [--schema=FILE] [FILE]...
+    tot check [--strict] [--template] [--schema=FILE] [FILE]...
                                   parse and report errors
     tot build [--check] [--out=FILE] [--set=N=V]... FILE
                                   build a .tott template into a .tot document
@@ -33,8 +33,8 @@ one layer of a merge; a file actually named `-` is `./-`.
 FLAGS
     --check         fmt: write nothing, and exit 1 if any file would change
                     build: exit 1 if the built document differs from the one on disk
-    --template      fmt: read every input as a .tott template. A FILE's extension
-                    already decides; this is for stdin, which has none
+    --template      fmt, check: read every input as a .tott template. A FILE's
+                    extension already decides; this is for stdin, which has none
     --strict        check: also warn when a member's value is not on its key's line
     --schema=FILE   check: also check the shape against the schema in FILE
     --out=FILE      build: write here instead of stdout
@@ -225,10 +225,12 @@ fn fmt(args: &[String]) -> Result<ExitCode, String> {
 fn check(args: &[String]) -> Result<ExitCode, String> {
     let (flags, files) = split(args);
     let mut strict = false;
+    let mut template = false;
     let mut schema_file = None;
     for flag in flags {
         match flag {
             "--strict" => strict = true,
+            "--template" => template = true,
             _ if flag.starts_with("--schema=") => {
                 schema_file = Some(&flag["--schema=".len()..]);
             }
@@ -248,12 +250,31 @@ fn check(args: &[String]) -> Result<ExitCode, String> {
         None => None,
     };
 
+    let inputs = sources(&files);
+
+    // A schema says what shape a document has, and a template does not have one until it is
+    // built: `(param "x")` could be anything. Refusing beats checking the wrong thing, and the
+    // pipeline that does work is worth naming.
+    if schema.is_some()
+        && let Some(source) = inputs
+            .iter()
+            .find(|source| source.dialect(template) == tot::Dialect::Template)
+    {
+        return Err(format!(
+            "`--schema` checks a document, and {} is a template — build it first: \
+             `tot build {} | tot check --schema=…`",
+            source.label(),
+            source.label()
+        ));
+    }
+
     let mut status = Status::default();
-    for source in sources(&files) {
+    for source in inputs {
         let Some(src) = source.read(&mut status) else {
             continue;
         };
-        let (warnings, violations) = match diagnose(&src, strict, schema.as_ref()) {
+        let dialect = source.dialect(template);
+        let (warnings, violations) = match diagnose(&src, strict, schema.as_ref(), dialect) {
             Ok(found) => found,
             Err(e) => {
                 eprintln!("tot: in {}", source.label());
@@ -409,13 +430,30 @@ fn diagnose(
     src: &str,
     strict: bool,
     schema: Option<&tot::Schema>,
+    dialect: tot::Dialect,
 ) -> Result<(Vec<tot::Warning>, Vec<tot::Violation>), tot::Error> {
-    let warnings = if strict { tot::lint(src)? } else { Vec::new() };
+    let template = dialect == tot::Dialect::Template;
+
+    let warnings = match (strict, template) {
+        (false, _) => Vec::new(),
+        (true, true) => tot::lint_template(src)?,
+        (true, false) => tot::lint(src)?,
+    };
     let violations = match schema {
+        // Refused above for a template, so this only ever sees a document.
         Some(schema) => schema.check(src)?,
         None => {
             if !strict {
-                tot::parse(src)?;
+                match template {
+                    // Reading a template validates its forms too: an unknown head, a wrong
+                    // argument count, a computed parameter name.
+                    true => {
+                        tot::Template::parse(src)?;
+                    }
+                    false => {
+                        tot::parse(src)?;
+                    }
+                }
             }
             Vec::new()
         }

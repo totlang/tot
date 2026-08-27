@@ -316,7 +316,7 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
 ```
 tot fmt [--check] [--template] [FILE]...
                                   format in place, or stdin to stdout
-tot check [--strict] [--schema=FILE] [FILE]...
+tot check [--strict] [--template] [--schema=FILE] [FILE]...
                                   parse and report errors
 tot build [--check] [--out=FILE] [--set=N=V]... FILE
                                   build a .tott template into a .tot document
@@ -331,7 +331,9 @@ tot from <json|yaml|toml> [FILE]  read another format and write tot
   a pipeline can be one layer of a merge; a file actually named `-` is `./-`.
 - `--check` on `fmt`: write nothing, exit 1 if any file would change.
 - `--strict` on `check`: also warn about the split-member shape above. Everything it reports
-  is legal tot, so it is opt-in.
+  is legal tot, so it is opt-in. It applies to a `.tott` template as well as to a document.
+- `--template` on `fmt` and `check`: read every input as a template. A file's extension already
+  decides, so this is for stdin, which has no extension to read.
 - `--raw` on `get`: print a string with no quotes and no escapes. Other values are unaffected,
   being unquoted already.
 - `--compact` on `to json`: one line instead of indented.
@@ -467,6 +469,13 @@ are all the same in both, because they are the same code.
 - A failure carries the file it happened in and the chain of imports that reached it, since the
   span belongs to whichever file the form was written in and not to the one the build started
   at.
+- **`tot check` reads a template**, and reading one checks its forms: an unknown head, a wrong
+  argument count, a computed parameter name or import path. `--strict` applies its one lint too
+  — the parity hazard is the language's, and a form is one more kind of value that can land on
+  the wrong line.
+  - **`--schema` on a template is refused.** A schema says what shape a document has, and a
+    template does not have one until it is built: `(param "x")` could be anything. Building
+    first is the pipeline that works, and the diagnostic says so.
 - **`tot fmt` formats a template**, so a `.tott` file is kept honest the same way every other
   file here is. A form is one more bracketed shape and gets the same rule as a collection: the
   author's choice of inline or block is preserved, spacing is normalized, nothing is reflowed.
@@ -741,9 +750,8 @@ Left out rather than guessed at.
   whether `set` plus a shell pipeline covers it.
 - Whether `map` and `get` are wanted, and if so how `map` writes a function in a language that
   has none. See above.
-- Whether `tot check` should read a template. `fmt` does now, and `build` validates one, so a
-  `.tott` file is not unchecked — but `check --strict`'s one lint applies to a template as much
-  as to a document, and today it refuses the file.
+- Whether a template wants a lint of its own. It gets the one the language has; whether there
+  is a second rule worth having — about where a form's arguments sit, say — is unmeasured.
 
 ## Open questions
 

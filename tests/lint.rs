@@ -1,7 +1,7 @@
 //! Lint tests. Everything here is legal tot — the question is only whether `--strict` should
 //! say something about it.
 
-use tot::lint;
+use tot::{lint, lint_template};
 
 /// The keys the lint complained about, in order.
 fn flagged(src: &str) -> Vec<String> {
@@ -75,6 +75,58 @@ fn a_value_root_is_walked() {
 fn lint_reports_a_parse_error_rather_than_warnings() {
     let error = lint("kind curly").expect_err("should not parse");
     assert!(error.message.contains("string values must be quoted"));
+}
+
+// --- templates ------------------------------------------------------------------------------
+
+/// The keys the lint complained about in a template.
+fn flagged_template(src: &str) -> Vec<String> {
+    lint_template(src)
+        .unwrap_or_else(|e| panic!("expected a valid template:\n{}", e.render(src)))
+        .iter()
+        .map(|warning| warning.message.clone())
+        .collect()
+}
+
+/// The hazard is the language's, not the document's: a template has no separator between
+/// members either, and a form is one more kind of value that can land on the wrong line.
+#[test]
+fn a_template_member_split_across_lines_is_flagged() {
+    let warnings = flagged_template("image\n(str \"x\")\n");
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("`image`"), "{warnings:?}");
+
+    assert!(flagged_template(r#"image (str "x")"#).is_empty());
+}
+
+/// A form may run past its key's line, the same as a `{`, `[`, or `"""` — only the start has
+/// to sit beside the key.
+#[test]
+fn a_form_may_run_past_its_keys_line() {
+    assert!(flagged_template("image (str\n  \"x\"\n)\n").is_empty());
+}
+
+/// An argument has no key, so no argument is ever warned about. A member *inside* one is a
+/// member like any other.
+#[test]
+fn the_rule_reaches_inside_a_form() {
+    assert!(flagged_template("a (param \"p\"\n  1)\n").is_empty());
+
+    let warnings = flagged_template("a (param \"p\" {inner\n1})\n");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("`inner`"), "{warnings:?}");
+}
+
+/// Reading a template validates its forms, so the lint refuses one that is not a template at
+/// all rather than reporting warnings about it.
+#[test]
+fn linting_a_template_reports_a_bad_form_rather_than_warnings() {
+    let error = lint_template("a (nope)").expect_err("not a form");
+    assert!(error.message.contains("`nope` is not a form"), "{error}");
+
+    // And the two dialects stay apart: parens are data in one and a form in the other.
+    assert!(lint("(a) 1").is_ok());
+    assert!(lint_template("(a) 1").is_err());
 }
 
 #[test]

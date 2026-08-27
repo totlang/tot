@@ -62,12 +62,30 @@ impl fmt::Display for Warning {
 /// assert_eq!(tot::lint("timeout\n30").unwrap().len(), 1);
 /// ```
 pub fn lint(src: &str) -> Result<Vec<Warning>, Error> {
+    lint_in(src, Dialect::Data)
+}
+
+/// The same check, over a `.tott` template.
+///
+/// The hazard is the language's, not the document's: a template has no separator between
+/// members either, and a form is a value that begins with `(`, which is one more thing that
+/// can quietly land on the wrong line.
+///
+/// ```
+/// assert!(tot::lint_template(r#"a (str "x")"#).unwrap().is_empty());
+/// assert_eq!(tot::lint_template("a\n(str \"x\")").unwrap().len(), 1);
+/// ```
+pub fn lint_template(src: &str) -> Result<Vec<Warning>, Error> {
+    lint_in(src, Dialect::Template)
+}
+
+fn lint_in(src: &str, dialect: Dialect) -> Result<Vec<Warning>, Error> {
     // Validate first, so the tree walk below can assume a well-formed document. Both walks
     // read the same tokens, so the source is lexed once.
-    let tokens = crate::lex::tokenize(src, Dialect::Data)?;
-    crate::parse::from_tokens(src, &tokens)?;
+    let tokens = crate::lex::tokenize(src, dialect)?;
+    crate::parse::validate(src, &tokens, dialect)?;
 
-    let document = cst::from_tokens(src, &tokens, Dialect::Data)?;
+    let document = cst::from_tokens(src, &tokens, dialect)?;
     let mut warnings = Vec::new();
     match &document.body {
         Body::Members(items) => visit_items(items, &mut warnings),
@@ -104,9 +122,8 @@ fn visit_node(node: &Node<'_>, warnings: &mut Vec<Warning>) {
         Node::Object(collection) | Node::Array(collection) => {
             visit_items(&collection.items, warnings);
         }
-        // A `.tot` document has no forms, so this is unreachable today. Walking the arguments
-        // anyway is what the rule would want if `check` ever reads a template: a member inside
-        // a form's argument is a member like any other.
+        // An argument has no key of its own, so no argument is ever warned about — but one may
+        // be an object, and a member inside a form is a member like any other.
         Node::Form(form) => visit_items(&form.args.items, warnings),
     }
 }

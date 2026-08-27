@@ -36,7 +36,7 @@ pub mod serde;
 pub use error::{Error, Span};
 pub use fmt::{format, format_template, format_value};
 pub use lex::Dialect;
-pub use lint::{Warning, lint};
+pub use lint::{Warning, lint, lint_template};
 pub use merge::{Nulls, merge, merge_into};
 pub use parse::{parse, parse_value};
 pub use path::{Missing, Path};

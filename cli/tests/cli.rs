@@ -545,6 +545,96 @@ fn fmt_formats_a_template_by_its_extension() {
     assert!(out.stderr.contains("not formatted"), "{}", out.stderr);
 }
 
+/// `check` reads a `.tott` file too, so a template is validated by the same command as
+/// everything else — and reading one checks its forms.
+#[test]
+fn check_validates_a_template_and_its_forms() {
+    let dir = TempDir::new("check-tott");
+    let path = dir.file("c.tott");
+
+    std::fs::write(&path, "a (str \"x\")\n").expect("write");
+    assert_eq!(run(&["check", arg(&path)], "").code, 0);
+
+    for (src, expected) in [
+        ("a (nope 1)\n", "`nope` is not a form"),
+        ("a (if true 1)\n", "was given 2"),
+        ("a (param (str \"x\"))\n", "has to be written down"),
+        ("a (str \"x\"\n", "unclosed `(`"),
+    ] {
+        std::fs::write(&path, src).expect("write");
+        let out = run(&["check", arg(&path)], "");
+        assert_eq!(out.code, 1, "`{src}`: {}", out.stderr);
+        assert!(out.stderr.contains(expected), "`{src}`: {}", out.stderr);
+    }
+}
+
+/// The one lint applies to a template as much as to a document.
+#[test]
+fn check_strict_lints_a_template() {
+    let dir = TempDir::new("check-tott-strict");
+    let path = dir.file("c.tott");
+    std::fs::write(&path, "image\n(str \"x\")\n").expect("write");
+
+    // Legal, so a plain check says nothing.
+    assert_eq!(run(&["check", arg(&path)], "").code, 0);
+
+    let out = run(&["check", "--strict", arg(&path)], "");
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("warning: "), "{}", out.stderr);
+    assert!(out.stderr.contains("`image`"), "{}", out.stderr);
+
+    // Stdin has no extension, so it needs telling.
+    let out = run(&["check", "--strict", "--template"], "image\n(str \"x\")\n");
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("`image`"), "{}", out.stderr);
+}
+
+/// A schema says what shape a document has, and a template does not have one until it is
+/// built. Refusing beats checking the wrong thing — and the pipeline that does work is named.
+#[test]
+fn check_refuses_a_schema_against_a_template() {
+    let dir = TempDir::new("check-tott-schema");
+    let schema = dir.file("shape.tot");
+    let template = dir.file("c.tott");
+    std::fs::write(&schema, "a \"string\"\n").expect("write");
+    std::fs::write(&template, "a (str \"x\")\n").expect("write");
+
+    let out = run(
+        &[
+            "check",
+            &format!("--schema={}", arg(&schema)),
+            arg(&template),
+        ],
+        "",
+    );
+    assert_eq!(out.code, 2);
+    assert!(out.stderr.contains("is a template"), "{}", out.stderr);
+    assert!(out.stderr.contains("tot build"), "{}", out.stderr);
+
+    // The pipeline it names does work.
+    let built = run(&["build", arg(&template)], "");
+    assert_eq!(built.code, 0, "{}", built.stderr);
+    let out = run(
+        &["check", &format!("--schema={}", arg(&schema))],
+        &built.stdout,
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr);
+}
+
+/// One command over a mixed directory: each input is read in its own language.
+#[test]
+fn check_reads_each_input_in_its_own_dialect() {
+    let dir = TempDir::new("check-mixed");
+    let document = dir.file("d.tot");
+    let template = dir.file("t.tott");
+    // Parens are data in one and a form in the other; both are correct as written.
+    std::fs::write(&document, "(a) 1\n").expect("write");
+    std::fs::write(&template, "a (str \"x\")\n").expect("write");
+
+    let out = run(&["check", arg(&document), arg(&template)], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+}
+
 /// A `.tot` file is still data even next to templates, so its parens stay ordinary — which is
 /// the guarantee the whole dialect split exists to keep.
 #[test]
