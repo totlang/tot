@@ -18,8 +18,7 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["config", "configuration", "parser", "json", "serde"]
 categories = ["config", "parser-implementations", "encoding"]
-# TODO before publishing: `repository = "https://…"`. This checkout has no remote to read one
-# from, and a wrong URL on the crates.io page is worse than none.
+repository = "https://github.com/totlang/tot"
 exclude = ["/.github", "/.gitattributes", "/site"]
 
 # The library stays dependency-free by default. The YAML and TOML converters need

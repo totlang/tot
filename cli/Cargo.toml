@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 readme = "../README.md"
 keywords = ["config", "configuration", "cli", "json", "formatter"]
 categories = ["command-line-utilities", "config", "development-tools"]
-# TODO before publishing: `repository = "https://…"`, the same one as the library.
+repository = "https://github.com/totlang/tot"
 
 [[bin]]
 name = "tot"

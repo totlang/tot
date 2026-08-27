@@ -1,0 +1,165 @@
+name: release
+
+# A tag builds the binaries and publishes them. A manual run builds them and stops, so the whole
+# matrix can be exercised before a tag exists — a tag is the one thing here that cannot be taken
+# back, and finding out that aarch64 does not link is much cheaper beforehand.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Symbols are most of the size of a release binary and nobody debugs one out of a tarball.
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  # Deliberately NOT `RUSTFLAGS: -D warnings`, unlike ci.yml. A lint that a newer compiler starts
+  # emitting should fail a pull request; failing a tag that has already been pushed just leaves a
+  # release half-made.
+
+jobs:
+  guard:
+    name: tag agrees with the manifests
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: what to call the artifacts
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A tag that disagrees with Cargo.toml ships a binary whose `--version` is a lie, and the
+      # crates.io release that follows carries a third number again. Both manifests, because
+      # `tot` and `tot-cli` are versioned together and drift between them is silent.
+      - name: version check
+        if: github.ref_type == 'tag'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for package in tot tot-cli; do
+            have=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r --arg p "$package" '.packages[] | select(.name == $p) | .version')
+            if [ "$have" != "$tag" ]; then
+              echo "::error::$package is $have but the tag says $tag"
+              exit 1
+            fi
+          done
+
+      # ci.yml triggers on branches, not tags. Without this a tag pushed to a branch that never
+      # ran CI would ship untested binaries.
+      - run: cargo test --workspace --all-features
+
+  build:
+    name: ${{ matrix.target }}
+    needs: guard
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, packages: musl-tools }
+          - {
+              target: aarch64-unknown-linux-gnu,
+              os: ubuntu-latest,
+              packages: gcc-aarch64-linux-gnu,
+              linker: aarch64-linux-gnu-gcc,
+            }
+          # macos-latest is Apple Silicon and carries both SDKs, so the Intel build is an
+          # ordinary cross-compile rather than a second runner.
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Every dependency in the tree is pure Rust — `libyaml-rs` is a port, not a binding, and
+      # nothing here has a build script that compiles C. So a cross-compile needs a linker for
+      # the target and nothing else: no `cross`, no container, no sysroot.
+      - name: linker for the target
+        if: matrix.packages != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.packages }}
+
+      - name: build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+        run: cargo build --release --target ${{ matrix.target }} -p tot-cli
+
+      # Both licences ship beside the binary: the dual licence is only an offer if the reader
+      # actually has both texts.
+      - name: package
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          name="tot-${{ needs.guard.outputs.version }}-${{ matrix.target }}"
+          mkdir "$name"
+          cp "target/${{ matrix.target }}/release/tot" "$name/"
+          cp README.md SPEC.md LICENSE-MIT LICENSE-APACHE "$name/"
+          tar czf "$name.tar.gz" "$name"
+
+      - name: package
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $name = "tot-${{ needs.guard.outputs.version }}-${{ matrix.target }}"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/tot.exe" $name
+          Copy-Item README.md, SPEC.md, LICENSE-MIT, LICENSE-APACHE $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: tot-${{ needs.guard.outputs.version }}-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  publish:
+    name: publish the release
+    needs: [guard, build]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # One checksum file for the lot, so a download can be verified without trusting the page it
+      # came from. Globbed by prefix rather than `*` so the file cannot end up listing itself.
+      - name: checksums
+        working-directory: artifacts
+        run: |
+          sha256sum tot-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # A tag with a hyphen in it — v0.2.0-rc1 — is a prerelease, so it does not become the
+          # "latest release" that every download link points at.
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease=--prerelease ;;
+            *) prerelease= ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" artifacts/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            $prerelease
