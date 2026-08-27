@@ -34,7 +34,7 @@ pub mod template;
 pub mod serde;
 
 pub use error::{Error, Span};
-pub use fmt::{format, format_value};
+pub use fmt::{format, format_template, format_value};
 pub use lex::Dialect;
 pub use lint::{Warning, lint};
 pub use merge::{Nulls, merge, merge_into};

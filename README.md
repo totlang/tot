@@ -70,7 +70,7 @@ package, or use `--workspace`.
 
 | | |
 |---|---|
-| `tot fmt [--check] [FILE]...` | format in place; `--check` writes nothing and exits 1 on a diff |
+| `tot fmt [--check] [--template] [FILE]...` | format in place; `--check` writes nothing and exits 1 on a diff |
 | `tot check [--strict] [--schema=F] [FILE]...` | parse and report diagnostics |
 | `tot build [--check] [--out=F] [--set=N=V]... FILE` | build a `.tott` template into a document |
 | `tot merge [FILE]...` | fold documents together, left to right |
@@ -180,8 +180,15 @@ Things worth knowing:
   its template, the way `fmt --check` catches formatting.
 - Imports must be **acyclic**, and a failure names the file it happened in plus the chain that
   reached it.
-- **`tot fmt` doesn't format templates yet.** The CST has no node for a form, so `fmt` reads a
-  `.tott` file as data and reports the forms as parse errors.
+- **`tot fmt` formats templates**, so a `.tott` file is kept honest like everything else here.
+  A form is one more bracketed shape with the same rule as a collection — inline vs. block is
+  yours, spacing is normalized, nothing is reflowed. The head stays with the opening (`(str`),
+  and a block form closes with `)` on its own line, the way `}` and `]` do.
+
+  The extension picks the dialect. Stdin has none, so it's a document unless you pass
+  `--template` — sniffing the contents would be exactly the implicit typing tot exists to
+  avoid. **One consequence worth knowing:** `"(a)"` is unquoted to `(a)` in a `.tot` file and
+  stays quoted in a `.tott` one, because unquoting it there would turn a key into a form.
 
 [examples/service.tott](examples/service.tott) builds
 [examples/service.tot](examples/service.tot), and a test keeps them in step.
@@ -267,6 +274,7 @@ Check `.tot` files out with LF, as [.gitattributes](.gitattributes) in this repo
 ```rust
 let value = tot::parse(src)?;                     // -> Value
 let text  = tot::format(src)?;                    // canonical tot, source -> source
+let text  = tot::format_template(src)?;           // the same, for a .tott source
 let text  = tot::format_value(&value);            // Value -> tot
 let folded = tot::merge(documents, tot::Nulls::Set);   // or merge_into(&mut base, overlay, …)
 let json  = tot::json::to_string_pretty(&value);
@@ -387,12 +395,12 @@ formatting preserves the parsed value, and formatting is idempotent.
 
 ## Next
 
-`tot merge`, `tot set`, schema validation, and the `.tott` template layer are built. Still open,
-in rough order:
+`tot merge`, `tot set`, schema validation, the `.tott` template layer, and `tot fmt` for
+templates are built. Still open, in rough order:
 
-- **`tot fmt` for templates.** The CST has no node for a form, so `fmt` currently reads a
-  `.tott` file as data and reports its forms as parse errors. Everything else in this project
-  is kept honest by `fmt --check`; templates aren't yet.
+- **`tot check` for templates.** `fmt` reads a `.tott` file now and `build` validates one, so
+  templates aren't unchecked — but `check --strict`'s one lint applies to a template as much as
+  to a document, and it still refuses the file.
 - **`map` and `get` forms.** Deliberately absent — `map` needs a way to write a function in a
   language whose first constraint is that it has none, and `get` needs a decision about what it
   reads from. `merge` was the measurement for whether forms were wanted at all; these two now

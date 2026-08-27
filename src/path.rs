@@ -350,7 +350,8 @@ fn members(map: &Map) -> String {
 /// straight back. The keys that most need this — a `.` or a space in them — are exactly the
 /// ones a reader would otherwise get wrong.
 pub(crate) fn as_segment(key: &str) -> String {
-    if can_be_bare(key) && !key.contains('.') {
+    // A path names a value in a `.tot` document, so it spells keys the way `.tot` does.
+    if can_be_bare(key, Dialect::Data) && !key.contains('.') {
         return key.to_string();
     }
     let mut out = String::from("\"");

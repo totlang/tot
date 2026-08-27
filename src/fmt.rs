@@ -5,7 +5,7 @@
 //! is re-indented along with the block it lives in, which is well defined precisely because
 //! its indentation is anchored to its closing delimiter.
 
-use crate::cst::{self, Body, Collection, Document, Item, Lead, Node};
+use crate::cst::{self, Body, Collection, Document, Form, Item, Lead, Node};
 use crate::error::Error;
 use crate::lex::{Dialect, can_be_bare};
 use crate::value::{Value, write_escaped};
@@ -18,12 +18,35 @@ use std::fmt::Write as _;
 /// assert_eq!(out, "{address {zip 94102}}\n");
 /// ```
 pub fn format(src: &str) -> Result<String, Error> {
+    format_in(src, Dialect::Data)
+}
+
+/// Format a `.tott` template into its canonical form.
+///
+/// The same formatter, with one more shape to write: a form is bracketed like a collection and
+/// follows the same rule, so the author's choice of inline or block is preserved and nothing is
+/// ever reflowed.
+///
+/// ```
+/// let out = tot::format_template("a (str   \"x\"  (param  \"n\"))").unwrap();
+/// assert_eq!(out, "a (str \"x\" (param \"n\"))\n");
+/// ```
+pub fn format_template(src: &str) -> Result<String, Error> {
+    format_in(src, Dialect::Template)
+}
+
+fn format_in(src: &str, dialect: Dialect) -> Result<String, Error> {
     // Validate first, so the tree walk below can assume a well-formed document. Both walks
     // read the same tokens, so the source is lexed once.
-    let tokens = crate::lex::tokenize(src, Dialect::Data)?;
-    crate::parse::from_tokens(src, &tokens)?;
+    let tokens = crate::lex::tokenize(src, dialect)?;
+    match dialect {
+        Dialect::Data => {
+            crate::parse::from_tokens(src, &tokens)?;
+        }
+        Dialect::Template => crate::template::validate(src, &tokens)?,
+    }
 
-    let document = cst::from_tokens(src, &tokens)?;
+    let document = cst::from_tokens(src, &tokens, dialect)?;
     let mut printer = Printer { out: String::new() };
     printer.document(&document);
     Ok(printer.finish())
@@ -107,12 +130,30 @@ impl Printer {
             Node::Scalar(raw) => self.scalar(raw, level),
             Node::Object(collection) => self.collection(collection, level, '{', '}'),
             Node::Array(collection) => self.collection(collection, level, '[', ']'),
+            Node::Form(form) => self.form(form, level),
         }
     }
 
     fn collection(&mut self, collection: &Collection<'_>, level: usize, open: char, close: char) {
+        self.out.push(open);
+        self.bracketed(collection, level, close, false);
+    }
+
+    /// A form is bracketed like a collection, so it gets the same rule: the author's choice of
+    /// inline or block is preserved and nothing is reflowed. The head belongs to the opening,
+    /// so `(str` stays together and only the arguments move.
+    fn form(&mut self, form: &Form<'_>, level: usize) {
+        self.out.push('(');
+        self.out.push_str(form.head);
+        // The one difference from a collection: `(str "a")` needs a space after the head,
+        // where `{a 1}` needs nothing after the brace.
+        self.bracketed(&form.args, level, ')', true);
+    }
+
+    /// Writes the items of a bracketed shape and its closing bracket. The opening has already
+    /// been written; `spaced` is whether an inline first item needs a space before it.
+    fn bracketed(&mut self, collection: &Collection<'_>, level: usize, close: char, spaced: bool) {
         if collection.items.is_empty() && collection.tail.is_empty() {
-            self.out.push(open);
             self.out.push(close);
             return;
         }
@@ -127,9 +168,8 @@ impl Printer {
                 .any(|item| !item.lead.is_empty() || item.trailing.is_some());
 
         if !collection.block && !has_trivia {
-            self.out.push(open);
             for (i, item) in collection.items.iter().enumerate() {
-                if i > 0 {
+                if i > 0 || spaced {
                     self.out.push(' ');
                 }
                 if let Some(key) = &item.key {
@@ -142,7 +182,6 @@ impl Printer {
             return;
         }
 
-        self.out.push(open);
         self.out.push('\n');
         for item in &collection.items {
             self.item(item, level + 1);
@@ -344,7 +383,9 @@ fn write_block_line(out: &mut String, line: &str) {
 }
 
 fn write_key(out: &mut String, key: &str) {
-    if can_be_bare(key) {
+    // `format_value` writes `.tot` — it is what the converters and `tot build` emit — so a
+    // paren in a key is an ordinary character here.
+    if can_be_bare(key, Dialect::Data) {
         out.push_str(key);
     } else {
         out.push('"');

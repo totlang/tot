@@ -75,15 +75,14 @@ pub(crate) fn tokenize(src: &str, dialect: Dialect) -> Result<Vec<Token>, Error>
     .run()
 }
 
-/// Whether a key can be written without quotes **in `.tot`**. Keys are always strings, so this
-/// asks only whether every character survives being unquoted. Both emitters go through here so
-/// they cannot drift apart on which keys need quoting.
+/// Whether a key can be written without quotes. Keys are always strings, so this asks only
+/// whether every character survives being unquoted. Every emitter goes through here so they
+/// cannot drift apart on which keys need quoting.
 ///
-/// A template emitter would have to ask [`Dialect::Template`] instead, since a key holding a
-/// paren is bare in one dialect and quoted in the other. There is no template emitter yet —
-/// `tot build` writes `.tot`, which is what this answers for.
-pub(crate) fn can_be_bare(key: &str) -> bool {
-    !key.is_empty() && key.chars().all(|c| Dialect::Data.allows_bare(c))
+/// The dialect matters: `"(a)"` is a bare key in `.tot`, and unquoting it in a `.tott` file
+/// would turn a key into a form.
+pub(crate) fn can_be_bare(key: &str, dialect: Dialect) -> bool {
+    !key.is_empty() && key.chars().all(|c| dialect.allows_bare(c))
 }
 
 struct Lexer<'a> {

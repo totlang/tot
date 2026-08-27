@@ -7,7 +7,7 @@
 //! needed.
 
 use crate::error::{Error, Span};
-use crate::lex::{Token, TokenKind, can_be_bare};
+use crate::lex::{Dialect, Token, TokenKind, can_be_bare};
 
 /// One line of the run-up to an item.
 #[derive(Debug)]
@@ -23,6 +23,43 @@ pub(crate) enum Node<'a> {
     Scalar(&'a str),
     Object(Collection<'a>),
     Array(Collection<'a>),
+    /// A template form. Only a `.tott` document has these.
+    Form(Form<'a>),
+}
+
+/// A `(head arg…)` form.
+///
+/// The arguments carry their trivia exactly as an array's elements do, so a comment inside a
+/// form is kept by the same code that keeps one inside a list.
+#[derive(Debug)]
+pub(crate) struct Form<'a> {
+    /// The head word, as written.
+    pub head: &'a str,
+    pub args: Collection<'a>,
+}
+
+/// Which of the three bracketed shapes is being read. They differ only in what closes them and
+/// in whether their items have keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Object,
+    Array,
+    Form,
+}
+
+impl Shape {
+    fn closed_by(self, kind: &TokenKind) -> bool {
+        matches!(
+            (self, kind),
+            (Shape::Object, TokenKind::RBrace)
+                | (Shape::Array, TokenKind::RBracket)
+                | (Shape::Form, TokenKind::RParen)
+        )
+    }
+
+    fn keyed(self) -> bool {
+        self == Shape::Object
+    }
 }
 
 #[derive(Debug)]
@@ -81,11 +118,16 @@ pub(crate) struct Document<'a> {
 /// Builds the tree from an already-tokenized document. The caller has normally just validated
 /// the same tokens with [`parse`](crate::parse), and tokenizing again for this walk would be
 /// pure duplicate work — including re-unescaping every string.
-pub(crate) fn from_tokens<'a>(src: &'a str, tokens: &[Token]) -> Result<Document<'a>, Error> {
+pub(crate) fn from_tokens<'a>(
+    src: &'a str,
+    tokens: &[Token],
+    dialect: Dialect,
+) -> Result<Document<'a>, Error> {
     Builder {
         src,
         tokens,
         pos: 0,
+        dialect,
     }
     .document()
 }
@@ -94,6 +136,9 @@ struct Builder<'a, 't> {
     src: &'a str,
     tokens: &'t [Token],
     pos: usize,
+    /// Which language this document is in, which decides whether a key holding a paren can be
+    /// written bare.
+    dialect: Dialect,
 }
 
 impl<'a> Builder<'a, '_> {
@@ -111,10 +156,13 @@ impl<'a> Builder<'a, '_> {
             });
         }
 
-        // Mirrors `parse::document`: a document that opens with a bracket, or is a single
-        // token, is one value rather than a member list.
-        let single = matches!(self.tokens[0].kind, TokenKind::LBrace | TokenKind::LBracket)
-            || self.tokens.len() == 1;
+        // Mirrors `parse::document` and `template::document`: a document that opens with a
+        // bracket — or, in a template, with a form — or is a single token, is one value
+        // rather than a member list.
+        let single = matches!(
+            self.tokens[0].kind,
+            TokenKind::LBrace | TokenKind::LBracket | TokenKind::LParen
+        ) || self.tokens.len() == 1;
         if single {
             let node = self.node()?;
             // There is no member here to hang a trailing comment on, so the document keeps it.
@@ -202,7 +250,7 @@ impl<'a> Builder<'a, '_> {
             let span = token.span;
             let raw = &self.src[span.start..span.end];
             let (text, name) = match &token.kind {
-                TokenKind::Str(cooked) => (render_key(raw, cooked), cooked.clone()),
+                TokenKind::Str(cooked) => (render_key(raw, cooked, self.dialect), cooked.clone()),
                 TokenKind::Bareword => (raw.to_string(), raw.to_string()),
                 _ => return Err(internal()),
             };
@@ -243,8 +291,9 @@ impl<'a> Builder<'a, '_> {
         let token = self.tokens.get(self.pos).ok_or_else(internal)?;
         let span = token.span;
         match token.kind.clone() {
-            TokenKind::LBrace => Ok(Node::Object(self.collection(true)?)),
-            TokenKind::LBracket => Ok(Node::Array(self.collection(false)?)),
+            TokenKind::LBrace => Ok(Node::Object(self.collection(Shape::Object)?)),
+            TokenKind::LBracket => Ok(Node::Array(self.collection(Shape::Array)?)),
+            TokenKind::LParen => self.form(),
             TokenKind::Str(_) | TokenKind::Bareword => {
                 self.pos += 1;
                 Ok(Node::Scalar(&self.src[span.start..span.end]))
@@ -253,12 +302,47 @@ impl<'a> Builder<'a, '_> {
         }
     }
 
-    /// Builds `{ … }` when `keyed`, `[ … ]` otherwise. The opening bracket is the current
-    /// token.
-    fn collection(&mut self, keyed: bool) -> Result<Collection<'a>, Error> {
+    /// Builds `(head arg…)`. The `(` is the current token.
+    ///
+    /// The head is part of the opening rather than an argument, so `(str` stays together and
+    /// the arguments below it are an ordinary unkeyed item list.
+    fn form(&mut self) -> Result<Node<'a>, Error> {
+        self.pos += 1; // `(`
+
+        // A comment between `(` and the head has no home of its own. Move it inside rather
+        // than dropping it, the way a comment between a key and its value moves above the
+        // member — the formatter never loses one.
+        let (_, between) = self.split_gap(false);
+        let prefix: Vec<Lead<'a>> = between
+            .into_iter()
+            .filter(|line| matches!(line, Lead::Comment(_)))
+            .collect();
+
+        let head_span = self.tokens.get(self.pos).ok_or_else(internal)?.span;
+        let head = &self.src[head_span.start..head_span.end];
+        self.pos += 1;
+
+        let args = self.body(Shape::Form, head_span.end, prefix)?;
+        Ok(Node::Form(Form { head, args }))
+    }
+
+    /// Builds one bracketed shape. The opening bracket is the current token.
+    fn collection(&mut self, shape: Shape) -> Result<Collection<'a>, Error> {
         let open_end = self.tokens[self.pos].span.end;
         self.pos += 1;
+        self.body(shape, open_end, Vec::new())
+    }
+
+    /// The items between the brackets. `open_end` is where the opening ends — the bracket, or
+    /// for a form the head — and `prefix` is trivia that belongs before the first item.
+    fn body(
+        &mut self,
+        shape: Shape,
+        open_end: usize,
+        prefix: Vec<Lead<'a>>,
+    ) -> Result<Collection<'a>, Error> {
         let mut items: Vec<Item<'a>> = Vec::new();
+        let mut prefix = Some(prefix);
 
         loop {
             let (trailing, mut lead) = self.split_gap(!items.is_empty());
@@ -268,18 +352,21 @@ impl<'a> Builder<'a, '_> {
                     .expect("after_item implies an item")
                     .trailing = Some(comment);
             }
+            if items.is_empty() {
+                trim_leading_blanks(&mut lead);
+                if let Some(mut before) = prefix.take() {
+                    before.append(&mut lead);
+                    lead = before;
+                }
+            }
 
-            let at_close = match self.tokens.get(self.pos).map(|token| &token.kind) {
-                Some(TokenKind::RBrace) => keyed,
-                Some(TokenKind::RBracket) => !keyed,
-                _ => false,
-            };
+            let at_close = self
+                .tokens
+                .get(self.pos)
+                .is_some_and(|token| shape.closed_by(&token.kind));
             if at_close {
                 let close_start = self.tokens[self.pos].span.start;
                 self.pos += 1;
-                if items.is_empty() {
-                    trim_leading_blanks(&mut lead);
-                }
                 trim_trailing_blanks(&mut lead);
                 return Ok(Collection {
                     block: self.src[open_end..close_start].contains('\n'),
@@ -288,19 +375,18 @@ impl<'a> Builder<'a, '_> {
                 });
             }
 
-            if items.is_empty() {
-                trim_leading_blanks(&mut lead);
-            }
-            items.push(self.item(keyed, lead)?);
+            items.push(self.item(shape.keyed(), lead)?);
         }
     }
 }
 
 /// A key is always a string, so an unquoted spelling is available whenever every character
-/// is a legal bareword character. Otherwise the original quoting is kept verbatim, escapes
-/// and all.
-fn render_key(raw: &str, cooked: &str) -> String {
-    if can_be_bare(cooked) {
+/// is a legal bareword character *in this dialect*. Otherwise the original quoting is kept
+/// verbatim, escapes and all.
+///
+/// The dialect is what stops `"(a)" 1` in a template from being unquoted into a form.
+fn render_key(raw: &str, cooked: &str, dialect: Dialect) -> String {
+    if can_be_bare(cooked, dialect) {
         cooked.to_string()
     } else {
         raw.to_string()

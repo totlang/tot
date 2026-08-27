@@ -67,7 +67,7 @@ pub fn lint(src: &str) -> Result<Vec<Warning>, Error> {
     let tokens = crate::lex::tokenize(src, Dialect::Data)?;
     crate::parse::from_tokens(src, &tokens)?;
 
-    let document = cst::from_tokens(src, &tokens)?;
+    let document = cst::from_tokens(src, &tokens, Dialect::Data)?;
     let mut warnings = Vec::new();
     match &document.body {
         Body::Members(items) => visit_items(items, &mut warnings),
@@ -104,5 +104,9 @@ fn visit_node(node: &Node<'_>, warnings: &mut Vec<Warning>) {
         Node::Object(collection) | Node::Array(collection) => {
             visit_items(&collection.items, warnings);
         }
+        // A `.tot` document has no forms, so this is unreachable today. Walking the arguments
+        // anyway is what the rule would want if `check` ever reads a template: a member inside
+        // a form's argument is a member like any other.
+        Node::Form(form) => visit_items(&form.args.items, warnings),
     }
 }

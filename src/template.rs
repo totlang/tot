@@ -192,6 +192,20 @@ impl Template {
     }
 }
 
+/// Checks that an already-tokenized template is well formed, for a caller that walks the same
+/// tokens twice — the formatter validates before building its own tree, exactly as it does for
+/// a document.
+pub(crate) fn validate(src: &str, tokens: &[Token]) -> Result<(), Error> {
+    Parser {
+        src,
+        tokens,
+        pos: 0,
+        depth: 0,
+    }
+    .document()
+    .map(|_| ())
+}
+
 /// The template grammar is the data grammar plus one production — a form, wherever a value
 /// goes. It is a separate walk rather than a mode on [`crate::parse`] because it builds a
 /// different tree: a `Value` is data, and a form is not, so a form must not be able to appear

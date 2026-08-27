@@ -3,7 +3,8 @@
 //! Every fixture goes through [`f`], which checks the two properties a formatter owes you —
 //! the value is unchanged, and formatting again is a no-op — before returning the output.
 
-use tot::{Map, Value, format, format_value, parse};
+use tot::template::{Params, Template};
+use tot::{Map, Value, format, format_template, format_value, parse};
 
 fn f(src: &str) -> String {
     let once = format(src).unwrap_or_else(|e| panic!("{}", e.render(src)));
@@ -317,4 +318,125 @@ fn block_strings_are_indented_with_their_member() {
 fn invalid_documents_are_refused() {
     assert!(format("kind curly").is_err());
     assert!(format("a 1 a 2").is_err());
+}
+
+// --- templates ------------------------------------------------------------------------------
+
+/// The template fixture check, owing the same two properties `f` does — except that a template
+/// denotes a value only once it is built, so that is what gets compared.
+fn t(src: &str) -> String {
+    let build = |text: &str| {
+        Template::parse(text)
+            .unwrap_or_else(|e| panic!("{}", e.render(text)))
+            .evaluate(&Params::new())
+            .map(|value| tot::json::to_string(&value))
+    };
+
+    let once = format_template(src).unwrap_or_else(|e| panic!("{}", e.render(src)));
+
+    assert_eq!(
+        build(&once).ok(),
+        build(src).ok(),
+        "formatting changed what the template builds\n--- got ---\n{once}"
+    );
+
+    let twice = format_template(&once).unwrap();
+    assert_eq!(
+        twice, once,
+        "formatting is not idempotent\n--- once ---\n{once}\n--- twice ---\n{twice}"
+    );
+
+    once
+}
+
+/// A form is bracketed like a collection, so it gets the same rule: spacing is normalized and
+/// nothing is reflowed.
+#[test]
+fn inline_forms_stay_inline() {
+    assert_eq!(t(r#"a (str   "x"    "y")"#), "a (str \"x\" \"y\")\n");
+    assert_eq!(t(r#"a (param  "n"  1)"#), "a (param \"n\" 1)\n");
+    assert_eq!(t("a (str)"), "a (str)\n");
+    // Nested forms, and a form inside a collection.
+    assert_eq!(
+        t(r#"a (if (param "p" false) (str "y") "n")"#),
+        "a (if (param \"p\" false) (str \"y\") \"n\")\n"
+    );
+    assert_eq!(t(r#"xs [1 (param "n" 2) 3]"#), "xs [1 (param \"n\" 2) 3]\n");
+}
+
+/// The closing paren lands on its own line at the form's indent, the way `}` and `]` do. A
+/// form is not special: it is one more bracketed shape.
+#[test]
+fn block_forms_stay_block() {
+    assert_eq!(
+        t("a (str\n\"one\"\n\"two\")"),
+        "a (str\n  \"one\"\n  \"two\"\n)\n"
+    );
+    // The head stays on the opening line — alone it would read as an argument.
+    assert!(t("a (str\n\"one\")").starts_with("a (str\n"));
+    // Nested, so indentation compounds the same way.
+    assert_eq!(
+        t("a (str\n(param \"n\")\n(str\n\"x\")\n)"),
+        "a (str\n  (param \"n\")\n  (str\n    \"x\"\n  )\n)\n"
+    );
+}
+
+/// A comment forces block form and is never dropped, including one written between `(` and the
+/// head, where it has no home of its own.
+#[test]
+fn comments_inside_a_form_survive() {
+    assert_eq!(
+        t("a (str \"x\" # why\n\"y\")"),
+        "a (str\n  \"x\" # why\n  \"y\"\n)\n"
+    );
+    assert_eq!(
+        t("a ( # stray\nstr \"x\")"),
+        "a (str\n  # stray\n  \"x\"\n)\n"
+    );
+    assert_eq!(
+        t("a (str\n# above\n\"x\"\n)"),
+        "a (str\n  # above\n  \"x\"\n)\n"
+    );
+}
+
+/// The trap the dialect exists to close: unquoting a key that holds parens would turn it into
+/// a form. The same key is bare in a document and quoted in a template.
+#[test]
+fn a_key_holding_parens_stays_quoted_in_a_template() {
+    assert_eq!(t(r#""(a)" 1"#), "\"(a)\" 1\n");
+    assert_eq!(f(r#""(a)" 1"#), "(a) 1\n");
+
+    // `@` and `$` are reserved in neither, which is what choosing parens bought.
+    assert_eq!(t(r#""@type" 1 "$ref" 2"#), "@type 1\n$ref 2\n");
+}
+
+/// Everything the data formatter does, a template formatter still does — it is the same
+/// formatter with one more shape.
+#[test]
+fn a_template_is_still_formatted_like_a_document() {
+    assert_eq!(t(r#"{"a": 1, "b": [2, 3]}"#), "{a 1 b [2 3]}\n");
+    assert_eq!(t("a{\nb 1\n}"), "a {\n  b 1\n}\n");
+    assert_eq!(
+        t("motd \"\"\"\n hello\n \"\"\""),
+        "motd \"\"\"\n  hello\n  \"\"\"\n"
+    );
+    assert_eq!(t("# a comment\n\n\na 1"), "# a comment\n\na 1\n");
+}
+
+/// A form is a value, so a template whose whole content is one is that form.
+#[test]
+fn a_form_can_be_the_whole_document() {
+    assert_eq!(t(r#"(param "whole" 1)"#), "(param \"whole\" 1)\n");
+}
+
+#[test]
+fn invalid_templates_are_refused() {
+    assert!(format_template("a (nope)").is_err());
+    assert!(format_template("a ()").is_err());
+    assert!(format_template("a (str").is_err());
+    assert!(format_template("kind curly").is_err());
+    // And a document is not read as a template unless it is asked for: here the parens are
+    // data, so `format` takes it and `format_template` does not.
+    assert!(format("(a) 1").is_ok());
+    assert!(format_template("(a) 1").is_err());
 }

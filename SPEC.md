@@ -291,7 +291,9 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
     per line. Write `{a 1 b 2}` if you want the whole document on one line.
   - An empty collection collapses to `{}` / `[]` even if it was written open, unless it
     contains a comment.
-  - Inline collections carry no inner padding: `{a 1}` and `[1 2]`, matching JSON.
+  - Inline collections carry no inner padding: `{a 1}` and `[1 2]`, matching JSON. A form is
+    bracketed too and follows the same rule, with the head part of the opening: `(str "a" "b")`
+    inline, and block as `(str` / one argument per line / `)` at the form's indent.
 - Converters (`tot from json`, etc.) have no author intent to preserve and emit block form for
   everything except empty collections, which stay `{}` / `[]`.
   - A string is written as a `"""` block when it contains a line break and every line reads
@@ -312,7 +314,8 @@ This is lossy by construction — `tot → toml → tot` does not round-trip thr
 ## CLI
 
 ```
-tot fmt [--check] [FILE]...       format in place, or stdin to stdout
+tot fmt [--check] [--template] [FILE]...
+                                  format in place, or stdin to stdout
 tot check [--strict] [--schema=FILE] [FILE]...
                                   parse and report errors
 tot build [--check] [--out=FILE] [--set=N=V]... FILE
@@ -464,9 +467,17 @@ are all the same in both, because they are the same code.
 - A failure carries the file it happened in and the chain of imports that reached it, since the
   span belongs to whichever file the form was written in and not to the one the build started
   at.
-- **`tot fmt` does not yet format a template.** A `.tott` file has forms in it, which the CST
-  has no node for, so the formatter would have to grow one. Until then `fmt` reads a `.tott`
-  file as data and reports the forms as parse errors.
+- **`tot fmt` formats a template**, so a `.tott` file is kept honest the same way every other
+  file here is. A form is one more bracketed shape and gets the same rule as a collection: the
+  author's choice of inline or block is preserved, spacing is normalized, nothing is reflowed.
+  The head belongs to the opening — `(str` stays together — and a block form closes with `)` on
+  its own line at the form's indent, the way `}` and `]` do.
+  - The dialect follows the extension, as it does for `(import …)`. Stdin has none, so it is a
+    document unless `--template` says otherwise; guessing from the contents would be the
+    implicit typing goal #4 forbids.
+  - **Key quoting is dialect-dependent, and this is the one place it bites.** `"(a)"` is
+    unquoted to `(a)` in a `.tot` file and kept quoted in a `.tott` one, because unquoting it
+    there would turn a key into a form.
 
 ### Merge
 
@@ -730,10 +741,9 @@ Left out rather than guessed at.
   whether `set` plus a shell pipeline covers it.
 - Whether `map` and `get` are wanted, and if so how `map` writes a function in a language that
   has none. See above.
-- Whether `tot fmt` should format a template. It cannot today: the CST has no node for a form.
-  The question is not whether it is possible but whether a canonical form for a template is
-  worth a second emitter — the argument for it is that `fmt --check` is how this project keeps
-  every other file honest.
+- Whether `tot check` should read a template. `fmt` does now, and `build` validates one, so a
+  `.tott` file is not unchecked — but `check --strict`'s one lint applies to a template as much
+  as to a document, and today it refuses the file.
 
 ## Open questions
 

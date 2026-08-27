@@ -482,7 +482,7 @@ fn join(path: &str, segment: &str) -> String {
 /// which is what happens anyway for a violation with nowhere to point.
 fn key_spans(src: &str, tokens: &[Token]) -> HashMap<String, Span> {
     let mut spans = HashMap::new();
-    let Ok(document) = cst::from_tokens(src, tokens) else {
+    let Ok(document) = cst::from_tokens(src, tokens, Dialect::Data) else {
         return spans;
     };
     match &document.body {
@@ -512,5 +512,7 @@ fn index_node(node: &Node<'_>, path: &str, spans: &mut HashMap<String, Span>) {
         Node::Object(collection) | Node::Array(collection) => {
             index(&collection.items, path, spans);
         }
+        // A schema and the documents it describes are both `.tot`, so there are no forms here.
+        Node::Form(_) => {}
     }
 }

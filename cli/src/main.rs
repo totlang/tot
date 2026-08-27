@@ -12,7 +12,8 @@ const HELP: &str = "\
 tot — JSON with the punctuation removed
 
 USAGE
-    tot fmt [--check] [FILE]...   format in place, or stdin to stdout
+    tot fmt [--check] [--template] [FILE]...
+                                  format in place, or stdin to stdout
     tot check [--strict] [--schema=FILE] [FILE]...
                                   parse and report errors
     tot build [--check] [--out=FILE] [--set=N=V]... FILE
@@ -32,6 +33,8 @@ one layer of a merge; a file actually named `-` is `./-`.
 FLAGS
     --check         fmt: write nothing, and exit 1 if any file would change
                     build: exit 1 if the built document differs from the one on disk
+    --template      fmt: read every input as a .tott template. A FILE's extension
+                    already decides; this is for stdin, which has none
     --strict        check: also warn when a member's value is not on its key's line
     --schema=FILE   check: also check the shape against the schema in FILE
     --out=FILE      build: write here instead of stdout
@@ -166,9 +169,11 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
 fn fmt(args: &[String]) -> Result<ExitCode, String> {
     let (flags, files) = split(args);
     let mut check_only = false;
+    let mut template = false;
     for flag in flags {
         match flag {
             "--check" => check_only = true,
+            "--template" => template = true,
             other => return Err(unknown_flag(other)),
         }
     }
@@ -178,7 +183,10 @@ fn fmt(args: &[String]) -> Result<ExitCode, String> {
         let Some(src) = source.read(&mut status) else {
             continue;
         };
-        let formatted = match tot::format(&src) {
+        let formatted = match match source.dialect(template) {
+            tot::Dialect::Template => tot::format_template(&src),
+            tot::Dialect::Data => tot::format(&src),
+        } {
             Ok(formatted) => formatted,
             Err(e) => {
                 eprintln!("tot: in {}", source.label());
@@ -663,6 +671,21 @@ impl Source {
         match self {
             Source::Stdin => "<stdin>",
             Source::File(path) => path,
+        }
+    }
+
+    /// Which language to read this input in.
+    ///
+    /// A file's extension decides, the same way it does for `(import …)`. Stdin has no
+    /// extension and so is a document, unless `--template` says otherwise — guessing from the
+    /// contents would be exactly the implicit typing the language exists to avoid.
+    fn dialect(&self, force_template: bool) -> tot::Dialect {
+        if force_template {
+            return tot::Dialect::Template;
+        }
+        match self {
+            Source::Stdin => tot::Dialect::Data,
+            Source::File(path) => build::dialect(std::path::Path::new(path)),
         }
     }
 

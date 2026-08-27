@@ -507,13 +507,80 @@ fn the_example_template_still_builds_its_document() {
     );
     assert_eq!(out.code, 0, "{}", out.stderr);
 
-    // And what it builds is canonical tot, not merely parseable tot.
+    // What it builds is canonical tot, not merely parseable tot — and the template itself is
+    // canonical too, now that `fmt` can read one.
     let out = run_in(
         Some(&root()),
-        &["fmt", "--check", "examples/service.tot"],
+        &[
+            "fmt",
+            "--check",
+            "examples/service.tot",
+            "examples/service.tott",
+            "examples/regions.tot",
+        ],
         "",
     );
     assert_eq!(out.code, 0, "{}", out.stderr);
+}
+
+/// `fmt` reads a `.tott` file as a template, the same way `(import …)` decides by extension.
+#[test]
+fn fmt_formats_a_template_by_its_extension() {
+    let dir = TempDir::new("fmt-tott");
+    let path = dir.file("c.tott");
+    std::fs::write(&path, "a:(str   \"x\"    (param  \"n\"))\n").expect("write");
+
+    let out = run(&["fmt", arg(&path)], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read"),
+        "a (str \"x\" (param \"n\"))\n"
+    );
+
+    // And `--check` reports one that has drifted, so a template is kept honest like anything
+    // else in the repository.
+    std::fs::write(&path, "a (str  \"x\")\n").expect("write");
+    let out = run(&["fmt", "--check", arg(&path)], "");
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.contains("not formatted"), "{}", out.stderr);
+}
+
+/// A `.tot` file is still data even next to templates, so its parens stay ordinary — which is
+/// the guarantee the whole dialect split exists to keep.
+#[test]
+fn fmt_still_reads_a_tot_file_as_data() {
+    let dir = TempDir::new("fmt-tot-parens");
+    let path = dir.file("c.tot");
+    std::fs::write(&path, "\"(a)\" 1\n").expect("write");
+
+    let out = run(&["fmt", arg(&path)], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "(a) 1\n");
+
+    // The same key in a template keeps its quotes, or it would become a form.
+    assert_eq!(
+        run(&["fmt", "--template"], "\"(a)\" 1\n").stdout,
+        "\"(a)\" 1\n"
+    );
+}
+
+/// Stdin has no extension, so it is a document unless `--template` says otherwise. Guessing
+/// from the contents would be the implicit typing the language exists to avoid.
+#[test]
+fn fmt_needs_to_be_told_when_stdin_is_a_template() {
+    let template = "a (str  \"x\")\n";
+
+    let out = run(&["fmt"], template);
+    assert_eq!(out.code, 1, "a form is not a value in a document");
+    assert!(
+        out.stderr.contains("string values must be quoted"),
+        "{}",
+        out.stderr
+    );
+
+    let out = run(&["fmt", "--template"], template);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "a (str \"x\")\n");
 }
 
 #[test]
