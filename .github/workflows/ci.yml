@@ -1,0 +1,107 @@
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows earns its place here: filename case, path separators, and CRLF checkouts
+        # are all things this tool has rules about, and three past bugs were platform-shaped.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # `--all-features` matters: serde is off by default, so without it the serde tests
+      # compile to nothing and pass silently.
+      - run: cargo test --workspace --all-features
+
+  lint:
+    name: fmt and clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --all --check
+      # Both feature configurations. The gate is easy to get wrong in one direction only.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  msrv:
+    name: msrv (rust-version)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Reads `rust-version` from Cargo.toml, so this fails the moment the code needs a newer
+      # compiler than the manifest admits to.
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-features
+
+  examples:
+    name: examples are canonical
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --workspace
+
+      # The tool's own guarantees, applied to the tool's own files. `fmt --check` is why the
+      # repository pins `.tot` to LF in .gitattributes; without that a CRLF checkout could
+      # never pass.
+      - name: fmt --check
+        run: ./target/release/tot fmt --check examples/*.tot examples/*.tott
+
+      - name: check --strict
+        run: ./target/release/tot check --strict examples/*.tot examples/*.tott
+
+      # The prize: the committed document still matches the template it came from.
+      - name: build --check
+        run: |
+          ./target/release/tot build --check \
+            --set=prod=true --set-raw=tag=v1.4.2 examples/service.tott
+
+      - name: schema still describes the example
+        run: ./target/release/tot check --schema=examples/config.schema.tot examples/config.tot
+
+  package:
+    name: publishable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Catches what only a publish catches: a missing license, a path dependency with no
+      # version, metadata that does not resolve. `--workspace` is what makes this runnable
+      # before the first release — `tot-cli` depends on `tot` by path, and per-crate the dry
+      # run would go looking for `tot` on crates.io and fail for a reason that is not a defect.
+      - run: cargo publish --dry-run --workspace
+
+      # Nothing unexpected in the archive. A stray file at the repository root ships to every
+      # consumer, and has once before.
+      - name: no junk in the package
+        run: |
+          cargo package --list -p tot | sort > /tmp/packaged.txt
+          if grep -vqE '^(\.cargo_vcs_info\.json|Cargo\.(toml|lock)|Cargo\.toml\.orig|LICENSE-(MIT|APACHE)|README\.md|SPEC\.md|\.gitignore|(src|tests|examples)/.*)$' /tmp/packaged.txt; then
+            echo "unexpected files in the package:"
+            grep -vE '^(\.cargo_vcs_info\.json|Cargo\.(toml|lock)|Cargo\.toml\.orig|LICENSE-(MIT|APACHE)|README\.md|SPEC\.md|\.gitignore|(src|tests|examples)/.*)$' /tmp/packaged.txt
+            exit 1
+          fi

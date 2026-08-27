@@ -7,4 +7,8 @@
 *.rs text eol=lf
 *.md text eol=lf
 *.toml text eol=lf
+*.yml text eol=lf
 .gitattributes text eol=lf
+.gitignore text eol=lf
+LICENSE-MIT text eol=lf
+LICENSE-APACHE text eol=lf

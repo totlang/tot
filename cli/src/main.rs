@@ -3,7 +3,7 @@
 mod build;
 mod convert;
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::ExitCode;
 
 use convert::NullPolicy;
@@ -25,7 +25,8 @@ USAGE
                                   write VALUE at PATH and print the document
     tot to <FORMAT> [FILE]        write this document as json, yaml, or toml
     tot from <FORMAT> [FILE]      read json, yaml, or toml and write tot
-    tot help
+    tot help                      this text; also --help or -h
+    tot --version                 print the version; also -V
 
 With no FILE, input is read from stdin. A FILE of `-` is stdin too, so it can be
 one layer of a merge; a file actually named `-` is `./-`.
@@ -157,7 +158,7 @@ fn main() -> ExitCode {
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
     let Some(command) = args.first().map(String::as_str) else {
-        print!("{HELP}");
+        write_out(HELP)?;
         return Ok(ExitCode::SUCCESS);
     };
     match command {
@@ -170,11 +171,11 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "to" => to(&args[1..]),
         "from" => from(&args[1..]),
         "help" | "--help" | "-h" => {
-            print!("{HELP}");
+            write_out(HELP)?;
             Ok(ExitCode::SUCCESS)
         }
         "--version" | "-V" => {
-            println!("tot {}", env!("CARGO_PKG_VERSION"));
+            write_out(&format!("tot {}\n", env!("CARGO_PKG_VERSION")))?;
             Ok(ExitCode::SUCCESS)
         }
         other => Err(format!("unknown command `{other}` — try `tot help`")),
@@ -215,7 +216,7 @@ fn fmt(args: &[String]) -> Result<ExitCode, String> {
         };
 
         if let (Source::Stdin, false) = (&source, check_only) {
-            print!("{formatted}");
+            write_out(&formatted)?;
             continue;
         }
         if formatted == src {
@@ -430,7 +431,7 @@ fn build_command(args: &[String]) -> Result<ExitCode, String> {
         // surprise, and the inferred name exists only for `--check` to compare against.
         return match out {
             None => {
-                print!("{built}");
+                write_out(&built)?;
                 Ok(ExitCode::SUCCESS)
             }
             Some(out) => {
@@ -589,7 +590,7 @@ fn merge(args: &[String]) -> Result<ExitCode, String> {
         documents.push(value);
     }
 
-    print!("{}", tot::format_value(&tot::merge(documents, nulls)));
+    write_out(&tot::format_value(&tot::merge(documents, nulls)))?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -642,7 +643,7 @@ fn set(args: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::from(1));
     }
 
-    print!("{}", tot::format_value(&document));
+    write_out(&tot::format_value(&document))?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -684,8 +685,8 @@ fn get(args: &[String]) -> Result<ExitCode, String> {
     };
 
     match value {
-        tot::Value::String(s) if raw => println!("{s}"),
-        value => print!("{}", tot::format_value(value)),
+        tot::Value::String(s) if raw => write_out(&format!("{s}\n"))?,
+        value => write_out(&tot::format_value(value))?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -739,12 +740,13 @@ fn to(args: &[String]) -> Result<ExitCode, String> {
         }
     };
 
-    print!("{out}");
     // An empty document converts to empty text, and a lone newline is not a better rendering
     // of it than nothing at all.
-    if !out.is_empty() && !out.ends_with('\n') {
-        println!();
-    }
+    let terminated = match out.is_empty() || out.ends_with('\n') {
+        true => out,
+        false => out + "\n",
+    };
+    write_out(&terminated)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -772,7 +774,7 @@ fn from(args: &[String]) -> Result<ExitCode, String> {
         }
     };
 
-    print!("{}", tot::format_value(&value));
+    write_out(&tot::format_value(&value))?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -964,6 +966,26 @@ fn only_for(format: Format, wanted: Format, flag: &str) -> Result<(), String> {
 
 fn unknown_flag(flag: &str) -> String {
     format!("unknown flag `{flag}` — try `tot help`")
+}
+
+/// Writes to stdout, treating a reader that has gone away as the ordinary end of a pipeline.
+///
+/// `print!` panics when the write fails, so `tot get big.tot | head -1` aborted with a Rust
+/// panic and exit 101 — a code this tool's contract does not have, printed as a backtrace-style
+/// message that reads like a crash. Every command here is meant to compose (`tot build c.tott |
+/// tot check --schema=…`), and a downstream reader stopping early is what composing looks like.
+///
+/// Any other write failure is still a failure, and reaches exit 2 like the rest of them.
+fn write_out(text: &str) -> Result<(), String> {
+    let mut stdout = std::io::stdout().lock();
+    match stdout
+        .write_all(text.as_bytes())
+        .and_then(|()| stdout.flush())
+    {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(e) => Err(format!("writing to stdout: {e}")),
+    }
 }
 
 fn read_stdin() -> Result<String, String> {

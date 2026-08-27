@@ -2,7 +2,13 @@
 name = "tot-cli"
 version = "0.1.0"
 edition = "2024"
-description = "Command-line interface for tot"
+rust-version = "1.88"
+description = "Command-line interface for tot — JSON with the punctuation removed"
+license = "MIT OR Apache-2.0"
+readme = "../README.md"
+keywords = ["config", "configuration", "cli", "json", "formatter"]
+categories = ["command-line-utilities", "config", "development-tools"]
+# TODO before publishing: `repository = "https://…"`, the same one as the library.
 
 [[bin]]
 name = "tot"
@@ -10,5 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 toml = { version = "1.1.4", features = ["preserve_order"] }
-tot = { path = ".." }
+# The version is what cargo publishes against; the path is what a local build uses. Without a
+# version requirement `cargo publish` refuses the crate outright.
+tot = { path = "..", version = "0.1.0" }
 yaml_serde = "0.10.7"

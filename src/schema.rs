@@ -54,7 +54,10 @@ pub struct Schema {
 /// The location is a path rather than a span, because that is what a shape mismatch has: a
 /// missing member is nowhere in the text at all. Where the document does have somewhere to
 /// point, [`span`](Violation::span) is set as well.
+///
+/// Read, not built — so `non_exhaustive`, for the reason [`Error`](crate::Error) is.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Violation {
     /// Where in the document, spelled the way [`Path`](crate::Path) spells it, so it can be
     /// handed straight to `tot get`. Empty at the root.

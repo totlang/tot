@@ -8,7 +8,10 @@ use crate::error::{self, Error, Span};
 use crate::lex::Dialect;
 
 /// Something legal but worth a second look.
+///
+/// Read, not built — so `non_exhaustive`, for the reason [`Error`](crate::Error) is.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Warning {
     /// The source range the warning is about.
     pub span: Span,

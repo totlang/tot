@@ -23,9 +23,11 @@ it. [examples/config.tot](examples/config.tot) tours the syntax.
 - **String values must be quoted.** `kind curly` is a parse error. Bare values are only
   numbers, `true`, `false`, `null`. Reason: two adjacent barewords are undecidable —
   `country united states` has no recoverable meaning.
-- **Keys are bare unless they can't be.** Reserved outside strings: whitespace and
-  `, : " { } [ ] # =`. Everything else is fine bare: `path/to/thing`,
-  `com.example.key`, `my-name`, `123`. A dot is an ordinary character, not a nesting operator.
+- **Keys are bare unless they can't be.** Reserved outside strings: whitespace, control
+  characters, and `, : " { } [ ] # =` — plus `(` and `)`, but only in a `.tott` template.
+  Everything else is fine bare: `path/to/thing`, `com.example.key`, `my-name`, `123`. A dot is
+  an ordinary character, not a nesting operator. A key that holds a reserved character is
+  written quoted, escapes and all: `"a\u0001b"`.
 - **`,` and `:` are whitespace.** Every JSON file is valid tot, byte for byte. Trailing commas
   are legal.
 - **`#` to end of line is the only comment.** No block form.
@@ -62,11 +64,19 @@ land somewhere further down.
 ## CLI
 
 ```bash
+cargo install --path cli            # puts `tot` on your PATH
+```
+
+Or build it in place:
+
+```bash
 cargo build --release -p tot-cli    # target/release/tot
 ```
 
 The root package is the library, so a bare `cargo build` won't produce the binary — name the
-package, or use `--workspace`.
+package, or use `--workspace`. Rust 1.88 or newer, which is what edition 2024 plus let-chains
+needs; `rust-version` says so in both manifests, so cargo will tell you rather than the
+compiler.
 
 | | |
 |---|---|
@@ -426,8 +436,14 @@ cargo fmt --all --check
 **`--all-features` matters** — `serde` is off by default, so without it the serde tests compile
 to nothing and pass silently. Run clippy both ways; the feature gate is easy to get wrong.
 
-Edition 2024. Formatter tests assert two properties on every fixture, not just expected output:
-formatting preserves the parsed value, and formatting is idempotent.
+Edition 2024, Rust 1.88. Formatter tests assert two properties on every fixture, not just
+expected output: formatting preserves the parsed value, and formatting is idempotent.
+
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs all of the above on Linux,
+Windows, and macOS, plus three things a local run tends to skip: the MSRV the manifests claim,
+the tool's own guarantees over `examples/` (`fmt --check`, `check --strict`, `build --check`,
+and the schema), and a publish dry run. That last one is not ceremony — a missing license and a
+path dependency without a version are both invisible until you try to publish.
 
 ## Next
 
@@ -443,3 +459,17 @@ forms, and `fmt` and `check` for templates are all built. Still open, in rough o
 - **A lint of its own for templates.** A template gets the one lint the language has, since the
   parity hazard is the language's. Whether there's a second rule worth having — about where a
   form's arguments sit, say — is unmeasured.
+
+## License
+
+Dual-licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. This is the Rust ecosystem's convention: MIT for anyone who finds Apache-2.0's
+notice requirements heavy, Apache-2.0 for anyone whose legal team wants the explicit patent
+grant.
+
+Unless you state otherwise, any contribution you intentionally submit for inclusion in this
+work shall be dual-licensed as above, with no additional terms or conditions.

@@ -343,10 +343,15 @@ impl ser::SerializeMap for SerializeObject {
     }
 
     fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> {
-        let key = self
-            .key
-            .take()
-            .expect("serde calls serialize_key before serialize_value");
+        // serde's contract is key-then-value, so a derived `Serialize` never lands here — but a
+        // hand-written one can, and a library that panics on misuse of its own public trait
+        // impl is a poor neighbour. `serde_json` returns an error for exactly this.
+        let Some(key) = self.key.take() else {
+            return Err(Error::new(
+                "serialize_value was called before serialize_key, so there is no key for \
+                 this value",
+            ));
+        };
         self.insert(key, value)
     }
 

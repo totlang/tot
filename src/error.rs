@@ -1,6 +1,10 @@
 use std::fmt;
 
 /// A byte range into the source text.
+///
+/// Deliberately *not* `non_exhaustive`, unlike the diagnostics that carry one. A span is two
+/// byte offsets and there is no third thing it could ever grow, so sealing it would buy nothing
+/// and would cost a caller the ability to build one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     /// Byte offset of the first character.
@@ -16,7 +20,13 @@ impl Span {
 }
 
 /// A lex or parse failure, carrying the source range that caused it.
+///
+/// The fields are readable but the struct is `non_exhaustive`: a diagnostic is something a
+/// caller reads, never something it builds, and leaving it open would make every future
+/// addition — a note, a second span, a severity — a breaking change for anyone who wrote a
+/// struct literal or an exhaustive pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Error {
     /// The offending source range.
     pub span: Span,

@@ -1468,6 +1468,72 @@ fn flags_are_rejected_for_formats_they_do_not_apply_to() {
     assert_eq!(run(&["to", "toml", "--null=error"], "a 1").code, 0);
 }
 
+/// A reader that stops early is the ordinary end of a pipeline, not a crash.
+///
+/// `print!` panics when the write fails, so `tot get big.tot | head -1` used to abort with a
+/// Rust panic and exit 101 — a code this tool's contract does not have, printed as something
+/// that reads like a bug in the tool. Every command here is documented as composing.
+#[test]
+fn a_reader_that_stops_early_is_not_a_crash() {
+    // Comfortably past a pipe buffer, so the child is still writing when the reader goes.
+    let mut src = String::from("xs [");
+    for i in 0..200_000 {
+        src.push_str(&i.to_string());
+        src.push(' ');
+    }
+    src.push(']');
+
+    let dir = TempDir::new("broken-pipe");
+    let path = dir.file("big.tot");
+    std::fs::write(&path, &src).expect("write");
+
+    let mut child = Command::new(EXE)
+        .args(["to", "json", arg(&path)])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tot");
+
+    // Closing the read end mid-write is what `| head -1` does.
+    drop(child.stdout.take().expect("stdout is piped"));
+    let output = child.wait_with_output().expect("wait for tot");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !stderr.contains("panicked"),
+        "panicked on a closed pipe:\n{stderr}"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a closed pipe should be a clean exit: {stderr}"
+    );
+}
+
+/// The help lists every way in, including the two that are not subcommands.
+///
+/// `--version` worked and appeared nowhere in the help, so a user had no documented way to find
+/// the version to quote in a bug report. The other help tests could not see it: they all run
+/// something the help *does* print, which catches a wrong spelling but never an omission.
+#[test]
+fn the_help_lists_every_command_it_accepts() {
+    let help = run(&["help"], "").stdout;
+    for spelling in ["--version", "-V", "--help", "-h"] {
+        assert!(help.contains(spelling), "the help omits `{spelling}`");
+    }
+
+    // And each one does what the help says, so this is not documenting something absent.
+    for args in [&["--version"][..], &["-V"][..]] {
+        let out = run(args, "");
+        assert_eq!(out.code, 0, "{args:?}: {}", out.stderr);
+        assert!(out.stdout.starts_with("tot "), "{args:?}: {}", out.stdout);
+    }
+    for args in [&["--help"][..], &["-h"][..]] {
+        assert_eq!(run(args, "").stdout, help, "{args:?}");
+    }
+}
+
 #[test]
 fn help_is_printed_with_no_arguments() {
     for args in [&[][..], &["help"][..]] {

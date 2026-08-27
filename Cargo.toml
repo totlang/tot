@@ -5,7 +5,18 @@ members = ["cli"]
 name = "tot"
 version = "0.1.0"
 edition = "2024"
+# Edition 2024 needs 1.85; the let-chains in `lint`, `parse`, and the CLI need 1.88. Declared so
+# that an older toolchain gets cargo's "requires rustc 1.88 or newer" instead of a raw error
+# about an edition it has never heard of.
+rust-version = "1.88"
 description = "JSON with the punctuation removed"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["config", "configuration", "parser", "json", "serde"]
+categories = ["config", "parser-implementations", "encoding"]
+# TODO before publishing: `repository = "https://…"`. This checkout has no remote to read one
+# from, and a wrong URL on the crates.io page is worse than none.
+exclude = ["/.github", "/.gitattributes"]
 
 # The library stays dependency-free by default. The YAML and TOML converters need
 # third-party parsers, so they live in the `tot-cli` crate instead.
