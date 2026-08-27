@@ -324,19 +324,24 @@ fn invalid_documents_are_refused() {
 
 /// The template fixture check, owing the same two properties `f` does — except that a template
 /// denotes a value only once it is built, so that is what gets compared.
+///
+/// A fixture has to build, which is why each one either takes no parameters or gives them
+/// defaults. Comparing two `Option`s here would let a fixture that fails to build compare
+/// `None` against `None` and pass having checked nothing.
 fn t(src: &str) -> String {
-    let build = |text: &str| {
+    let build = |text: &str, which: &str| {
         Template::parse(text)
-            .unwrap_or_else(|e| panic!("{}", e.render(text)))
+            .unwrap_or_else(|e| panic!("{which} does not parse:\n{}", e.render(text)))
             .evaluate(&Params::new())
             .map(|value| tot::json::to_string(&value))
+            .unwrap_or_else(|e| panic!("{which} does not build:\n{}", e.render()))
     };
 
     let once = format_template(src).unwrap_or_else(|e| panic!("{}", e.render(src)));
 
     assert_eq!(
-        build(&once).ok(),
-        build(src).ok(),
+        build(&once, "the formatted template"),
+        build(src, "the fixture"),
         "formatting changed what the template builds\n--- got ---\n{once}"
     );
 
@@ -376,8 +381,8 @@ fn block_forms_stay_block() {
     assert!(t("a (str\n\"one\")").starts_with("a (str\n"));
     // Nested, so indentation compounds the same way.
     assert_eq!(
-        t("a (str\n(param \"n\")\n(str\n\"x\")\n)"),
-        "a (str\n  (param \"n\")\n  (str\n    \"x\"\n  )\n)\n"
+        t("a (str\n(param \"n\" \"N\")\n(str\n\"x\")\n)"),
+        "a (str\n  (param \"n\" \"N\")\n  (str\n    \"x\"\n  )\n)\n"
     );
 }
 

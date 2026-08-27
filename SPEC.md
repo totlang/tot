@@ -455,12 +455,26 @@ are all the same in both, because they are the same code.
   anything else is data — so importing a `.tot` file costs nothing, there being no evaluation
   to do. The graph must be **acyclic**; a file that imports itself, however indirectly, has no
   value to be replaced by, and is reported as a cycle with the chain that closed it.
+  - **Each file is built once**, however many times it is imported. A file's value does not
+    depend on which file imported it — parameters belong to the build — so the second import of
+    one is the first import's value. This is what keeps a build linear in the size of the graph
+    rather than exponential in its depth, and sharing a fragment is the ordinary reason to have
+    one. (A document that *contains* a shared fragment several times is still that large; what
+    is shared is the work, not the result.)
 - **Parameters come from the command line and nowhere else**, so a build is a pure function of
   its inputs and reproduces anywhere. Reading the environment would be convenient and would let
   `tot build --check` pass on one machine and fail on another for a reason the source does not
   show; `--set-raw=env="$ENV"` is how to opt into that with the dependency in plain sight.
   `--set=N=V` takes a tot value and `--set-raw=N=V` takes a string spelled literally — the same
   split `set` and `set --raw` use, so a value means one thing across the CLI.
+- `build` reads its input as a template, and a `.tot` file is **refused**: a document is
+  already built, and reading one in the template dialect would report its parens as forms,
+  which is a confusing way to say "wrong file". Any other name is taken at its word, since
+  asking to build a file says what it is.
+- `--out` may not name the template being built. Writing over the file being read loses it,
+  and there is nothing to recover it from.
+- `--set=N=V` needs a value: nothing at all is not a tot value, and reading it as the empty
+  object is not what a trailing `=` can have meant. `--set-raw=N=` is the empty string.
 - With no `--out` the document goes to stdout, so a build composes with the rest of the CLI.
   `--check` builds and compares against the document on disk, defaulting to the template's own
   name with the extra `t` removed. That is the real prize: CI verifies that the committed

@@ -38,23 +38,31 @@ fn int(n: i64) -> Value {
 }
 
 /// An importer backed by a map, so the evaluator can be tested without touching a disk.
-struct Files(HashMap<String, String>);
+///
+/// It counts what it was asked for, which is how a test can tell a file that was built once
+/// from one that was built over and over.
+struct Files {
+    files: HashMap<String, String>,
+    loads: usize,
+}
 
 impl Files {
     fn new(files: &[(&str, &str)]) -> Self {
-        Files(
-            files
+        Files {
+            files: files
                 .iter()
                 .map(|(name, src)| (name.to_string(), src.to_string()))
                 .collect(),
-        )
+            loads: 0,
+        }
     }
 }
 
 impl Imports for Files {
     fn load(&mut self, _from: &str, target: &str) -> Result<Loaded, String> {
+        self.loads += 1;
         let source = self
-            .0
+            .files
             .get(target)
             .ok_or_else(|| format!("cannot import `{target}`: no such file"))?;
         Ok(Loaded {
@@ -354,6 +362,67 @@ fn a_template_with_no_importer_says_so() {
     let _ = NoImports; // the type is public, for a caller that wants to be explicit
 }
 
+/// A shared fragment is the ordinary reason to have one, so a graph that shares must not cost
+/// time exponential in its depth. Each file is built once and its value reused.
+#[test]
+fn a_file_is_built_once_however_many_times_it_is_imported() {
+    // Each level joins the level below it with itself. The joined value is the empty string,
+    // so the document stays tiny while the number of *evaluations* is what the shape decides:
+    // one per level with reuse, 2^depth without.
+    const DEPTH: usize = 20;
+    let mut files: Vec<(String, String)> = (0..DEPTH)
+        .map(|i| {
+            (
+                format!("f{i}.tott"),
+                format!(
+                    r#"(str (import "f{n}.tott") (import "f{n}.tott"))"#,
+                    n = i + 1
+                ),
+            )
+        })
+        .collect();
+    files.push((format!("f{DEPTH}.tott"), "\"\"".to_string()));
+
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(name, src)| (name.as_str(), src.as_str()))
+        .collect();
+    let mut importer = Files::new(&borrowed);
+
+    let built = Template::parse_named(r#"root (import "f0.tott")"#, "main.tott")
+        .unwrap()
+        .build(&Params::new(), &mut importer)
+        .expect("builds");
+
+    assert_eq!(built.get("root").and_then(Value::as_str), Some(""));
+
+    // One load per import written, not per path through the graph. Without reuse this is
+    // 2^20 — over a million — and the assertion is what says so rather than the clock.
+    let edges = 2 * DEPTH + 1;
+    assert!(
+        importer.loads <= edges,
+        "{} loads for {edges} imports: a file is being rebuilt",
+        importer.loads
+    );
+}
+
+/// Reuse must not swallow a cycle: a file in the cache has finished building, so it cannot
+/// also be open on the stack.
+#[test]
+fn reuse_does_not_hide_a_cycle() {
+    // `shared.tot` is imported twice before the cycle is reached, so the cache is warm.
+    let message = build_with(
+        r#"a (import "shared.tot") b (import "shared.tot") c (import "loop.tott")"#,
+        &[
+            ("shared.tot", "x 1"),
+            ("loop.tott", r#"d (import "main.tott")"#),
+            ("main.tott", "unused 1"),
+        ],
+    )
+    .expect_err("a cycle");
+    assert!(message.contains("is a cycle"), "{message}");
+}
+
 /// A failure inside an imported file draws its caret in that file, and says how the build
 /// got there.
 #[test]
@@ -385,6 +454,47 @@ fn an_imported_file_that_does_not_parse_is_reported_in_that_file() {
         message.contains("string values must be quoted"),
         "{message}"
     );
+}
+
+/// The pieces a caller needs to render a build failure some other way than `render` does.
+/// They are the public surface of a `BuildError`, so what they promise is worth pinning.
+#[test]
+fn a_build_error_carries_the_parts_of_its_diagnostic() {
+    let template = Template::parse_named(r#"a (import "mid.tott")"#, "main.tott").unwrap();
+    assert_eq!(template.name(), "main.tott");
+
+    let e = template
+        .build(
+            &Params::new(),
+            &mut Files::new(&[
+                ("mid.tott", r#"b (import "leaf.tott")"#),
+                ("leaf.tott", "c (str null)"),
+            ]),
+        )
+        .expect_err("leaf fails");
+
+    // The failure belongs to the file it happened in, not to the one the build started at.
+    assert_eq!(e.file(), "leaf.tott");
+    assert_eq!(e.text(), "c (str null)");
+    // The chain reads from the root down to whatever imported the failing file.
+    assert_eq!(e.chain(), ["main.tott", "mid.tott"]);
+
+    // The span indexes that file's text, which is what makes a caret land in the right place.
+    let span = e.error().span;
+    assert_eq!(&e.text()[span.start..span.end], "null");
+    assert!(e.error().message.contains("no spelling for null"));
+}
+
+/// `Params` reports whether it has anything, which is what a caller checks before deciding a
+/// build needs arguments it was not given.
+#[test]
+fn params_knows_whether_it_is_empty() {
+    let mut params = Params::new();
+    assert!(params.is_empty());
+    params.set("x", int(1));
+    assert!(!params.is_empty());
+    assert_eq!(params.get("x"), Some(&int(1)));
+    assert_eq!(params.get("y"), None);
 }
 
 // --- the shape of a form --------------------------------------------------------------------

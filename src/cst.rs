@@ -318,7 +318,13 @@ impl<'a> Builder<'a, '_> {
             .filter(|line| matches!(line, Lead::Comment(_)))
             .collect();
 
-        let head_span = self.tokens.get(self.pos).ok_or_else(internal)?.span;
+        let token = self.tokens.get(self.pos).ok_or_else(internal)?;
+        // The head is a bareword or the template parser would have refused the form. Saying so
+        // here keeps the one assumption this walk makes checkable, the same as `node` does.
+        if token.kind != TokenKind::Bareword {
+            return Err(internal());
+        }
+        let head_span = token.span;
         let head = &self.src[head_span.start..head_span.end];
         self.pos += 1;
 

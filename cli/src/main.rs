@@ -183,10 +183,11 @@ fn fmt(args: &[String]) -> Result<ExitCode, String> {
         let Some(src) = source.read(&mut status) else {
             continue;
         };
-        let formatted = match match source.dialect(template) {
+        let result = match source.dialect(template) {
             tot::Dialect::Template => tot::format_template(&src),
             tot::Dialect::Data => tot::format(&src),
-        } {
+        };
+        let formatted = match result {
             Ok(formatted) => formatted,
             Err(e) => {
                 eprintln!("tot: in {}", source.label());
@@ -318,6 +319,13 @@ fn build_command(args: &[String]) -> Result<ExitCode, String> {
             _ if flag.starts_with("--out=") => out = Some(&flag["--out=".len()..]),
             _ if flag.starts_with("--set=") => {
                 let (name, text) = pair(&flag["--set=".len()..], "--set")?;
+                // Nothing at all is not the empty object, which is what parsing it would say.
+                if text.is_empty() {
+                    return Err(format!(
+                        "`--set={name}=` has no value; write `--set-raw={name}=` for an \
+                         empty string"
+                    ));
+                }
                 // The same spelling `tot set` takes, so a value means one thing across the CLI.
                 let value = tot::parse_value(text)
                     .map_err(|e| format!("`--set={name}=…`: `{text}` is not a tot value: {e}"))?;
@@ -343,13 +351,35 @@ fn build_command(args: &[String]) -> Result<ExitCode, String> {
         return Err("`tot build` takes one template".to_string());
     }
 
+    let from_stdin = input == "-";
+    let path = std::path::Path::new(input);
+
+    // `build` reads its input as a template. A `.tot` file is a document — already built — and
+    // reading one in the template dialect would report its parens as forms, which is a
+    // confusing way to say "wrong file". Any other name is taken at its word: the extension
+    // may be anything, and asking to build it is saying what it is.
+    if !from_stdin && build::is_document(path) {
+        return Err(format!(
+            "`{input}` is a document, not a template — `tot build` turns a `.tott` file into \
+             a `.tot` one"
+        ));
+    }
+
+    // Writing over the file being read loses it, and there is nothing to recover it from.
+    if let Some(out) = out
+        && build::same_file(std::path::Path::new(out), path)
+    {
+        return Err(format!(
+            "`--out={out}` is the template being built, and building over it would lose it"
+        ));
+    }
+
     // A template's imports resolve relative to itself, so it needs a name even when it came
     // from stdin — where the only sensible answer is the directory the build was run from.
-    let from_stdin = input == "-";
     let name = if from_stdin {
         "<stdin>".to_string()
     } else {
-        build::name(std::path::Path::new(input))
+        build::name(path)
     };
     let src = read_input(Some(input))?;
 
@@ -370,31 +400,38 @@ fn build_command(args: &[String]) -> Result<ExitCode, String> {
     };
     let built = tot::format_value(&document);
 
-    let target = match out {
-        Some(path) => Some(std::path::PathBuf::from(path)),
-        None if from_stdin => None,
-        None => build::output_for(input),
-    };
-
     if !check_only {
-        return match target {
-            Some(path) if out.is_some() => match std::fs::write(&path, &built) {
-                Ok(()) => Ok(ExitCode::SUCCESS),
-                Err(e) => Err(format!("{}: {e}", path.display())),
-            },
-            // Without `--out` the document goes to stdout; the inferred path is only what
-            // `--check` compares against, since writing a file nobody named is a surprise.
-            _ => {
+        // Without `--out` the document goes to stdout: writing a file nobody named would be a
+        // surprise, and the inferred name exists only for `--check` to compare against.
+        return match out {
+            None => {
                 print!("{built}");
                 Ok(ExitCode::SUCCESS)
             }
+            Some(out) => match std::fs::write(out, &built) {
+                Ok(()) => Ok(ExitCode::SUCCESS),
+                Err(e) => Err(format!("{out}: {e}")),
+            },
         };
     }
 
+    let target = match out {
+        Some(out) => Some(std::path::PathBuf::from(out)),
+        None if from_stdin => None,
+        None => build::output_for(input),
+    };
     let Some(path) = target else {
-        return Err(
-            "`tot build --check` needs `--out=FILE` when the template comes from stdin".to_string(),
-        );
+        // The inference is `.tott` → `.tot`, so it has nothing to work from when the template
+        // came from stdin or was named something else.
+        return Err(if from_stdin {
+            "`tot build --check` needs `--out=FILE` when the template comes from stdin".to_string()
+        } else {
+            format!(
+                "`tot build --check` needs `--out=FILE` for `{input}`: with no `--out` it \
+                 compares against the template's own name without the `t`, and that only \
+                 works for a `.tott` file"
+            )
+        });
     };
     let committed =
         std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;

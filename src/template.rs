@@ -585,7 +585,7 @@ fn plural(n: usize, noun: &str) -> String {
 /// Parameters come from the command line and nothing else, so a build is a pure function of
 /// its inputs and reproduces anywhere. Reading the environment would be convenient and would
 /// make `tot build --check` able to pass on one machine and fail on another for a reason the
-/// source does not show; anyone who wants it can write `--set env="$ENV"` and put the
+/// source does not show; anyone who wants it can write `--set-raw=env="$ENV"` and put the
 /// dependency in plain sight.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Params(HashMap<String, Value>);
@@ -614,7 +614,7 @@ impl Params {
     /// The names that were set, sorted, for a diagnostic.
     fn names(&self) -> String {
         if self.0.is_empty() {
-            return "no parameters were set; pass one with `--set name=value`".to_string();
+            return "no parameters were set; pass one with `--set=name=value`".to_string();
         }
         let mut names: Vec<&str> = self.0.keys().map(String::as_str).collect();
         names.sort_unstable();
@@ -740,6 +740,7 @@ impl Template {
                 name: self.name.clone(),
                 source: self.source.clone(),
             }],
+            done: HashMap::new(),
         };
         build.node(&self.root)
     }
@@ -756,6 +757,8 @@ struct Build<'a, I: Imports> {
     imports: &'a mut I,
     /// The files currently open, for cycle detection and for the chain in a diagnostic.
     stack: Vec<Frame>,
+    /// What each file already built to, by the name its importer gave it.
+    done: HashMap<String, Value>,
 }
 
 impl<I: Imports> Build<'_, I> {
@@ -880,17 +883,28 @@ impl<I: Imports> Build<'_, I> {
             .name
             .clone();
 
+        let loaded = self
+            .imports
+            .load(&from, &target)
+            .map_err(|message| self.fail(Error::new(span, message)))?;
+
+        // A file's value does not depend on which file imported it — parameters belong to the
+        // build, not to a file — so one that has already been built is that value again.
+        //
+        // This is what keeps a build linear in the size of the import graph. Without it, a
+        // graph that shares a fragment costs time exponential in its depth, and sharing a
+        // fragment is the ordinary reason to have one. A name in here has finished building,
+        // so it cannot also be on the stack, and looking here first cannot hide a cycle.
+        if let Some(value) = self.done.get(&loaded.name) {
+            return Ok(value.clone());
+        }
+
         if self.stack.len() >= MAX_IMPORTS {
             return Err(self.fail(Error::new(
                 span,
                 format!("imports are nested more than {MAX_IMPORTS} deep"),
             )));
         }
-
-        let loaded = self
-            .imports
-            .load(&from, &target)
-            .map_err(|message| self.fail(Error::new(span, message)))?;
 
         // An import graph has to be acyclic: a file that imports itself, however indirectly,
         // has no value to be replaced by.
@@ -910,13 +924,17 @@ impl<I: Imports> Build<'_, I> {
             ));
         }
 
+        let name = loaded.name.clone();
         self.stack.push(Frame {
             name: loaded.name,
             source: loaded.source,
         });
         let result = self.imported(loaded.dialect);
         self.stack.pop();
-        result
+
+        let value = result?;
+        self.done.insert(name, value.clone());
+        Ok(value)
     }
 
     /// Reads whatever the importer just handed us, in the dialect it named.

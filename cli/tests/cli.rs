@@ -430,6 +430,103 @@ fn build_reports_a_missing_parameter_with_a_caret() {
     );
 }
 
+/// A diagnostic that recommends a command line is documentation, and documentation that can be
+/// executed should be. The flag is pulled out of the message the tool actually printed and run.
+#[test]
+fn the_missing_parameter_help_names_a_flag_that_works() {
+    let dir = TempDir::new("build-help-flag");
+    let template = dir.file("c.tott");
+    std::fs::write(&template, "a (param \"x\")\n").expect("write");
+
+    let out = run(&["build", arg(&template)], "");
+    assert_eq!(out.code, 1);
+
+    // The message quotes the flag in backticks; take it verbatim and fill in a real name.
+    let suggested = out
+        .stderr
+        .split('`')
+        .find(|piece| piece.starts_with("--set"))
+        .expect("the help names a flag")
+        .replace("name=value", "x=1");
+    assert!(suggested.starts_with("--set="), "got `{suggested}`");
+
+    let out = run(&["build", &suggested, arg(&template)], "");
+    assert_eq!(
+        out.code, 0,
+        "the help suggested `{suggested}`, which the CLI rejected: {}",
+        out.stderr
+    );
+    assert_eq!(out.stdout, "a 1\n");
+}
+
+/// `--set` takes a tot value, and nothing at all is not one — writing the empty object is not
+/// what a trailing `=` can have meant.
+#[test]
+fn build_refuses_a_set_with_no_value() {
+    let dir = TempDir::new("build-empty-set");
+    let template = dir.file("c.tott");
+    std::fs::write(&template, "a (param \"x\")\n").expect("write");
+
+    let out = run(&["build", "--set=x=", arg(&template)], "");
+    assert_eq!(out.code, 2);
+    assert!(out.stderr.contains("has no value"), "{}", out.stderr);
+    assert!(out.stderr.contains("--set-raw=x="), "{}", out.stderr);
+
+    // The empty string it points at does work.
+    let out = run(&["build", "--set-raw=x=", arg(&template)], "");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "a \"\"\n");
+}
+
+/// `build` reads a template. A `.tot` file is a document, and reading one in the template
+/// dialect would report its parens as forms — a confusing way to say "wrong file".
+#[test]
+fn build_refuses_a_document() {
+    let dir = TempDir::new("build-document");
+    let document = dir.file("d.tot");
+    // Valid tot, where `(a)` is an ordinary key.
+    std::fs::write(&document, "(a) 1\n").expect("write");
+    assert_eq!(run(&["check", arg(&document)], "").code, 0);
+
+    let out = run(&["build", arg(&document)], "");
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr.contains("is a document, not a template"),
+        "{}",
+        out.stderr
+    );
+
+    // `--check` on a template named something else says what it actually needs, rather than
+    // blaming stdin.
+    let odd = dir.file("c.template");
+    std::fs::write(&odd, "a (str \"x\")\n").expect("write");
+    let out = run(&["build", "--check", arg(&odd)], "");
+    assert_eq!(out.code, 2);
+    assert!(out.stderr.contains("needs `--out=FILE`"), "{}", out.stderr);
+    assert!(!out.stderr.contains("stdin"), "not stdin: {}", out.stderr);
+}
+
+/// Writing over the file being read loses it, and there is nothing to recover it from.
+#[test]
+fn build_refuses_to_write_over_its_own_template() {
+    let dir = TempDir::new("build-self-out");
+    let template = dir.file("c.tott");
+    let source = "a (str \"x\")\n";
+    std::fs::write(&template, source).expect("write");
+
+    let out = run(
+        &[
+            "build",
+            &format!("--out={}", arg(&template)),
+            arg(&template),
+        ],
+        "",
+    );
+    assert_eq!(out.code, 2);
+    assert!(out.stderr.contains("would lose it"), "{}", out.stderr);
+    assert_eq!(std::fs::read_to_string(&template).expect("read"), source);
+}
+
 /// Imports resolve relative to the file doing the importing, so a directory of templates keeps
 /// working wherever it is and whatever directory the build runs from.
 #[test]

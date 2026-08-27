@@ -60,6 +60,22 @@ fn trim_verbatim(path: &str) -> String {
     path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
 }
 
+/// Whether two paths name the same file that already exists.
+///
+/// Canonical, so `a/../b.tot` and `b.tot` are one file. A path that does not exist yet cannot
+/// be the one being read, so failing to canonicalize is an honest `false`.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Whether this path names a document rather than a template.
+pub fn is_document(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("tot")
+}
+
 /// Where `tot build` writes, when it was not told: the input with its `.tott` suffix taken off.
 ///
 /// A template and the document built from it are the same configuration in two forms, so they

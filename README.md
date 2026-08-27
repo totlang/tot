@@ -179,7 +179,11 @@ Things worth knowing:
   disk (`config.tott` → `config.tot`), so CI catches a committed document that's drifted from
   its template, the way `fmt --check` catches formatting.
 - Imports must be **acyclic**, and a failure names the file it happened in plus the chain that
-  reached it.
+  reached it. **Each file is built once** however many times it's imported — its value doesn't
+  depend on who imported it, so a build stays linear in the size of the graph instead of
+  exponential in its depth. Sharing a fragment is the ordinary reason to have one.
+- `build` refuses a `.tot` file: a document is already built, and reading one as a template
+  would report its parens as forms. `--out` won't overwrite the template it's building from.
 - **`tot check` reads templates**, and reading one checks its forms — unknown head, wrong
   argument count, computed `param` name or `import` path. `--strict` applies its one lint too;
   the parity hazard is the language's, and a form is one more value that can land on the wrong
