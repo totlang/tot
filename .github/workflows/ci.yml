@@ -54,6 +54,35 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-features
 
+  playground:
+    name: the playground still compiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: site/wasm
+
+      # `site/wasm` is outside the cargo workspace, so every `--workspace` command above steps
+      # straight over it. Without this job nothing in the repository compiles that crate — and it
+      # is the crate that reaches `cli/src/convert.rs` through a `#[path]` include, so a rename in
+      # the CLI's converter would break the playground silently and be found by a visitor. The
+      # claim that the page cannot disagree with the tool rests on this file building.
+      - run: cargo fmt --check --manifest-path site/wasm/Cargo.toml
+
+      # On the host, because that is where the bridge's own tests can run: the crate is an rlib
+      # too, and a #[wasm_bindgen] function is an ordinary one off wasm32.
+      - run: cargo test --manifest-path site/wasm/Cargo.toml
+      - run: cargo clippy --manifest-path site/wasm/Cargo.toml --all-targets -- -D warnings
+
+      # And on the target it is actually shipped for, which is the one that catches a dependency
+      # that cannot reach wasm at all.
+      - run: cargo check --manifest-path site/wasm/Cargo.toml --target wasm32-unknown-unknown
+
   examples:
     name: examples are canonical
     runs-on: ubuntu-latest

@@ -49,6 +49,8 @@ type Result =
       ok: true;
       value?: string;
       warnings?: Diagnostic[];
+      /** Things the conversion did, as against things wrong with the document. Counted apart. */
+      notes?: Diagnostic[];
       violations?: Diagnostic[];
       imports?: { name: string; bytes: number; reads: number }[];
     }
@@ -393,11 +395,16 @@ export function start() {
         state.convert.target === 'tot' || state.convert.target.startsWith('json')
           ? highlight(result.value ?? '', 'tot')
           : escapeHtml(result.value ?? '');
+      // A note is not a warning: `tot to toml` drops a null and says so, and still reports a
+      // clean document. Counting the two together would make every null look like a complaint.
       const warnings = result.warnings ?? [];
+      const notes = result.notes ?? [];
       showDiagnostics(
         'Diagnostics',
-        warnings.map((warning) => paint(warning.render)),
-        `<span class="warn">${warnings.length} warning${warnings.length === 1 ? '' : 's'}</span><span>0 errors</span>`,
+        [...warnings, ...notes].map((diagnostic) => paint(diagnostic.render)),
+        `<span class="warn">${warnings.length} warning${warnings.length === 1 ? '' : 's'}</span>` +
+          (notes.length ? `<span>${notes.length} note${notes.length === 1 ? '' : 's'}</span>` : '') +
+          '<span>0 errors</span>',
         'No errors, and nothing the strict lint objects to.',
       );
     } else {
@@ -482,9 +489,25 @@ export function start() {
 
   function run() {
     if (!ready) return;
-    if (state.mode === 'convert') runConvert();
-    else if (state.mode === 'schema') runSchema();
-    else runTemplate();
+    try {
+      if (state.mode === 'convert') runConvert();
+      else if (state.mode === 'schema') runSchema();
+      else runTemplate();
+    } catch (error) {
+      // A panic in the wasm traps, and the release profile aborts rather than unwinds, so the
+      // instance is unusable from here on: every later call throws too. Without this the throw
+      // escapes the keystroke handler and the page just stops responding, with the last good
+      // output still on screen looking current. `ready` goes back to false so it stops trying,
+      // and the panic hook has already put the real message in the console.
+      ready = false;
+      drawerStatus.textContent = 'the parser stopped — reload the page';
+      showDiagnostics(
+        'Diagnostics',
+        [escapeHtml(String(error))],
+        '<span class="bad">the parser stopped</span>',
+        '',
+      );
+    }
   }
 
   // --- wiring ---

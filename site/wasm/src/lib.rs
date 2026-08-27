@@ -8,12 +8,14 @@
 //! The shape is always one of:
 //!
 //! ```json
-//! {"ok": true,  "value": "…", "warnings": [ … ]}
+//! {"ok": true,  "value": "…", "warnings": [ … ], "notes": [ … ]}
 //! {"ok": false, "error": "…", "line": 4, "column": 13}
 //! ```
 //!
 //! where `error` is the same caret diagnostic the CLI prints, because it is produced by the same
-//! `render` call.
+//! `render` call. `warnings` and `notes` are separate for the same reason the CLI keeps them
+//! apart: a warning is something wrong with the document and a note is something the conversion
+//! did, and counting the second as the first makes a clean document look dirty.
 
 use std::collections::HashMap;
 
@@ -22,11 +24,34 @@ use tot::{Dialect, Error, Map, Params, Schema, Template, Value};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 // `convert.rs` is the CLI's, included rather than copied. A second copy of the YAML and TOML
-// mappings would drift, and the playground exists to show what the tool actually does.
-// `--null=error` is a CLI flag with no playground equivalent, so that variant is unused here.
+// mappings would drift, and the playground exists to show what the tool actually does. Only half
+// of it is reachable from here: the playground writes the other formats but does not read them,
+// and `--null=error` is a CLI flag with no equivalent on the page.
 #[allow(dead_code)]
 #[path = "../../../cli/src/convert.rs"]
 mod convert;
+
+// --- panics --------------------------------------------------------------------------------
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(message: &str);
+}
+
+/// Says what went wrong before the module dies.
+///
+/// A panic here traps, and the release profile aborts rather than unwinds, so the instance cannot
+/// be used again: every later call fails too. The browser's own account of that is `unreachable
+/// executed` and nothing else, which is not enough to reproduce anything. The hook runs before
+/// the abort — the last moment the message still exists — so a bug that gets this far arrives
+/// with a location on it.
+#[wasm_bindgen(start)]
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        console_error(&format!("tot-wasm panicked: {info}"));
+    }));
+}
 
 // --- result plumbing ---------------------------------------------------------------------------
 
@@ -51,10 +76,18 @@ fn emit(value: Value) -> String {
 }
 
 fn ok(value: String, warnings: Vec<Value>) -> String {
+    reported(value, warnings, Vec::new())
+}
+
+/// A result that carries notes as well: things the conversion *did*, as against things wrong with
+/// the document. `tot to toml` prints a dropped null as a note and still reports no warnings, so
+/// the two travel in separate arrays and the page can count them the way the CLI does.
+fn reported(value: String, warnings: Vec<Value>, notes: Vec<Value>) -> String {
     emit(object(vec![
         ("ok", Value::Bool(true)),
         ("value", string(value)),
         ("warnings", Value::Array(warnings)),
+        ("notes", Value::Array(notes)),
     ]))
 }
 
@@ -119,7 +152,7 @@ pub fn format(src: &str, template: bool) -> String {
 /// Writes a document as one of the formats `tot to` knows.
 ///
 /// `target` is `tot`, `json`, `json-compact`, `yaml` or `toml`. A TOML target drops nulls, which
-/// is the CLI's default; anything it had to drop comes back in `dropped`.
+/// is the CLI's default; anything it had to drop comes back as a note.
 #[wasm_bindgen]
 pub fn convert(src: &str, target: &str) -> String {
     let value = match tot::parse(src) {
@@ -141,14 +174,16 @@ pub fn convert(src: &str, target: &str) -> String {
         },
         "toml" => match convert::to_toml(&value, convert::NullPolicy::Omit) {
             Ok((text, dropped)) => {
-                let mut notes = warnings;
-                for path in dropped {
-                    notes.push(object(vec![(
-                        "render",
-                        string(format!("note: dropped null at `{path}` — TOML has no null")),
-                    )]));
-                }
-                ok(text, notes)
+                let notes = dropped
+                    .into_iter()
+                    .map(|path| {
+                        object(vec![(
+                            "render",
+                            string(format!("note: dropped null at `{path}` — TOML has no null")),
+                        )])
+                    })
+                    .collect();
+                reported(text, warnings, notes)
             }
             Err(message) => refused(message),
         },
@@ -156,27 +191,12 @@ pub fn convert(src: &str, target: &str) -> String {
     }
 }
 
-/// Reads one of the formats `tot from` knows and writes it as tot.
-#[wasm_bindgen]
-pub fn from_format(src: &str, source_format: &str) -> String {
-    let value = match source_format {
-        // JSON is already tot, so this is a reparse and a reformat rather than a conversion.
-        "json" => match tot::parse(src) {
-            Ok(value) => value,
-            Err(error) => return failed(&error, src),
-        },
-        "yaml" => match convert::from_yaml(src) {
-            Ok(value) => value,
-            Err(message) => return refused(message),
-        },
-        "toml" => match convert::from_toml(src) {
-            Ok((value, _datetimes)) => value,
-            Err(message) => return refused(message),
-        },
-        other => return refused(format!("unknown source format `{other}`")),
-    };
-    ok(tot::format_value(&value), Vec::new())
-}
+// There is no `from_format` here, and no `get`, though both were easy to write and the library
+// has everything they need. An exported function is a root the linker cannot drop, so each one
+// would pull its whole path into the download: `from_format` alone retains the TOML parser and
+// libyaml's reading half for a direction the page has no control for. This crate is a page load,
+// which is why the profile goes to the trouble it does — an export the playground never calls
+// undoes that. Add them when the UI does, in the same commit.
 
 // --- schema ------------------------------------------------------------------------------------
 
@@ -367,6 +387,16 @@ fn parse_params(json: &str) -> Result<Params, String> {
         };
         let raw = matches!(fields.get("raw"), Some(Value::Bool(true)));
 
+        // The CLI refuses a name set twice rather than picking a winner, and its help says so in
+        // as many words. The params panel puts a duplicate one click away, so refusing it here is
+        // what keeps the page from teaching the opposite of the rule it is demonstrating.
+        if params.get(name).is_some() {
+            return Err(format!(
+                "parameter `{name}` was set twice — tot refuses a duplicate rather than \
+                 picking a winner"
+            ));
+        }
+
         let value = if raw {
             Value::String(text.clone())
         } else {
@@ -380,28 +410,151 @@ fn parse_params(json: &str) -> Result<Params, String> {
     Ok(params)
 }
 
-// --- paths -------------------------------------------------------------------------------------
+// --- tests ---------------------------------------------------------------------------------
 
-/// Reads one value out of a document, the way `tot get` does.
-#[wasm_bindgen]
-pub fn get(src: &str, path: &str, raw: bool) -> String {
-    let value = match tot::parse(src) {
-        Ok(value) => value,
-        Err(error) => return failed(&error, src),
-    };
-    let parsed = match tot::Path::parse(path) {
-        Ok(parsed) => parsed,
-        // A malformed path indexes into the path, not the document, so it is reported on its own.
-        Err(error) => return refused(error.render(path)),
-    };
-    match parsed.get(&value) {
-        Ok(found) => {
-            let text = match (raw, found) {
-                (true, Value::String(s)) => s.clone(),
-                _ => tot::format_value(found),
-            };
-            ok(text, Vec::new())
+// These run on the host, not in a browser: the crate is an `rlib` as well as a `cdylib`, and a
+// `#[wasm_bindgen]` function compiles to an ordinary one off wasm32. What they are for is the
+// seam — `convert.rs` arrives here by `#[path]`, and the whole reason it does is that the page
+// must not be able to disagree with `tot to`. Nothing else in the repository compiles this file.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reads a field back out of a result. The bridge answers in JSON, which is a language tot
+    /// parses, so the tests read the answers with the same parser that wrote them.
+    fn field(json: &str, path: &str) -> Value {
+        let parsed = tot::parse(json).expect("the bridge emits JSON");
+        tot::Path::parse(path)
+            .expect("a literal path")
+            .get(&parsed)
+            .unwrap_or_else(|e| panic!("no `{path}` in {json}: {e}"))
+            .clone()
+    }
+
+    fn count(json: &str, path: &str) -> usize {
+        match field(json, path) {
+            Value::Array(items) => items.len(),
+            other => panic!("`{path}` is {other:?}, not an array"),
         }
-        Err(missing) => refused(format!("no such path: {missing}")),
+    }
+
+    fn is_ok(json: &str) -> bool {
+        field(json, "ok") == Value::Bool(true)
+    }
+
+    #[test]
+    fn a_document_converts_to_every_target_the_page_offers() {
+        for target in ["tot", "json", "json-compact", "yaml", "toml"] {
+            let out = convert("a 1 b \"two\"", target);
+            assert!(is_ok(&out), "{target} failed: {out}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_target_is_refused_rather_than_guessed() {
+        let out = convert("a 1", "xml");
+        assert!(!is_ok(&out));
+        assert_eq!(
+            field(&out, "error"),
+            Value::String("unknown target format `xml`".into())
+        );
+    }
+
+    #[test]
+    fn a_parse_error_carries_the_caret_and_a_place_to_put_it() {
+        // A bare word in value position: the mistake the language exists to make loud.
+        let out = format("kind curly", false);
+        assert!(!is_ok(&out));
+        let Value::String(rendered) = field(&out, "error") else {
+            panic!("the error is a string");
+        };
+        assert!(rendered.contains('^'), "no caret in {rendered}");
+        assert_eq!(field(&out, "line"), integer(1));
+    }
+
+    #[test]
+    fn a_dropped_null_is_a_note_and_not_a_warning() {
+        // TOML has no null, so `tot to toml` drops one and says so. It is not a complaint about
+        // the document, and counting it as one would make a clean document look dirty.
+        let out = convert("a 1 retries null", "toml");
+        assert!(is_ok(&out), "{out}");
+        assert_eq!(count(&out, "notes"), 1, "{out}");
+        assert_eq!(count(&out, "warnings"), 0, "{out}");
+    }
+
+    #[test]
+    fn the_strict_lint_reaches_the_page() {
+        // A member split across a line is what `tot check --strict` objects to.
+        assert_eq!(count(&format("timeout\n30", false), "warnings"), 1);
+        assert_eq!(count(&format("timeout 30", false), "warnings"), 0);
+    }
+
+    #[test]
+    fn a_parameter_set_twice_is_refused_the_way_the_cli_refuses_it() {
+        let files = r#"{"a.tott": "tag (param \"tag\")"}"#;
+        let twice = r#"[{"name":"tag","value":"\"x\"","raw":false},
+                        {"name":"tag","value":"\"y\"","raw":false}]"#;
+        let out = build(files, "a.tott", twice);
+        assert!(!is_ok(&out), "a duplicate was accepted: {out}");
+        let Value::String(message) = field(&out, "error") else {
+            panic!("the error is a string");
+        };
+        assert!(message.contains("was set twice"), "{message}");
+    }
+
+    #[test]
+    fn a_raw_parameter_is_a_literal_string_and_a_set_one_is_parsed() {
+        let files = r#"{"a.tott": "v (param \"v\")"}"#;
+        let raw = build(files, "a.tott", r#"[{"name":"v","value":"1","raw":true}]"#);
+        assert_eq!(field(&raw, "value"), Value::String("v \"1\"\n".into()));
+
+        let set = build(files, "a.tott", r#"[{"name":"v","value":"1","raw":false}]"#);
+        assert_eq!(field(&set, "value"), Value::String("v 1\n".into()));
+    }
+
+    #[test]
+    fn a_template_builds_and_says_what_it_imported() {
+        let files = r#"{"a.tott": "regions (import \"r.tot\")", "r.tot": "[\"us\" \"eu\"]"}"#;
+        let out = build(files, "a.tott", "[]");
+        assert!(is_ok(&out), "{out}");
+        assert_eq!(count(&out, "imports"), 1, "{out}");
+        // A built document has no CST behind it, so it comes back in canonical block form rather
+        // than keeping the inline shape the imported file was written in.
+        assert_eq!(
+            field(&out, "value"),
+            Value::String("regions [\n  \"us\"\n  \"eu\"\n]\n".into())
+        );
+    }
+
+    #[test]
+    fn an_import_of_a_file_that_is_not_open_names_the_file() {
+        let files = r#"{"a.tott": "x (import \"gone.tot\")"}"#;
+        let out = build(files, "a.tott", "[]");
+        assert!(!is_ok(&out));
+        let Value::String(message) = field(&out, "error") else {
+            panic!("the error is a string");
+        };
+        assert!(message.contains("gone.tot"), "{message}");
+    }
+
+    #[test]
+    fn a_schema_and_a_document_are_told_apart_when_one_of_them_will_not_parse() {
+        let bad_schema = check_schema("a 1", "port int");
+        assert!(!is_ok(&bad_schema));
+        assert_eq!(field(&bad_schema, "where"), Value::String("schema".into()));
+
+        let bad_document = check_schema("port 8080 port 80", r#"port "int""#);
+        assert!(!is_ok(&bad_document));
+        assert_eq!(
+            field(&bad_document, "where"),
+            Value::String("document".into())
+        );
+    }
+
+    #[test]
+    fn every_violation_is_reported_and_not_just_the_first() {
+        let out = check_schema(r#"port "80" host 1"#, r#"port "int" host "string""#);
+        assert!(is_ok(&out), "{out}");
+        assert_eq!(count(&out, "violations"), 2, "{out}");
     }
 }
