@@ -39,9 +39,38 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - run: cargo fmt --all --check
-      # Both feature configurations. The gate is easy to get wrong in one direction only.
+      # Both ends of the `serde` gate. These two say nothing about `yaml` and `toml`: `tot-cli`
+      # depends on the library with both of them on, and cargo resolves a package's features
+      # once across everything it is building, so the line without `--all-features` is not the
+      # features-off build it looks like. The `features` job below is where those are covered.
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  features:
+    name: each feature on its own
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      # No `--workspace` command reaches these configurations, because `tot-cli` pulls `yaml`
+      # and `toml` into every one of them: `cargo test --workspace` runs the converter tests,
+      # `cargo test -p tot` runs none of them. `-p tot` is what resolves the library's features
+      # on their own, which makes this the only place a `#[cfg]` on `convert.rs`, `yaml.rs`,
+      # `toml.rs`, or the `ConvertError` re-export is checked in the direction that turns the
+      # feature off — and the only place either converter is built without the other.
+      - run: cargo clippy -p tot --all-targets --no-default-features -- -D warnings
+      - run: cargo clippy -p tot --all-targets --features serde -- -D warnings
+      - run: cargo clippy -p tot --all-targets --features yaml -- -D warnings
+      - run: cargo clippy -p tot --all-targets --features toml -- -D warnings
+
+      # Run them too, not just compile them: a converter test that quietly reaches for the other
+      # feature's module passes under `--all-features` and fails here.
+      - run: cargo test -p tot --features yaml
+      - run: cargo test -p tot --features toml
 
   msrv:
     name: msrv (rust-version)

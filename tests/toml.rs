@@ -44,6 +44,24 @@ fn the_root_must_be_an_object() {
 }
 
 #[test]
+fn a_null_root_is_told_apart_from_a_root_of_the_wrong_shape() {
+    // Under `Omit` the root null is dropped, which leaves nothing to write rather than
+    // something unwritable. Both refusals are about the root, so only the cause differs — and
+    // a reader told the root "is not an object" would go looking for the object they wrote.
+    let value = tot::parse_value("null").unwrap();
+    let error = toml::to_string(&value, NullPolicy::Omit).unwrap_err();
+    assert_eq!(
+        error.message,
+        "TOML needs a table at the root, and this document is a single null"
+    );
+
+    // The other policy refuses the same document before the root is ever in question, and
+    // names the path the way every other refusal does.
+    let error = toml::to_string(&value, NullPolicy::Error).unwrap_err();
+    assert_eq!(error.message, "the document root: TOML has no null");
+}
+
+#[test]
 fn datetimes_become_strings_and_are_reported() {
     let FromToml { value, datetimes } = toml::from_str("when = 1979-05-27\n").unwrap();
     assert_eq!(value, tot::parse("when \"1979-05-27\"").unwrap());

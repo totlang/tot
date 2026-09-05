@@ -426,6 +426,15 @@ its shortest form — `1.00` as `1.0` — and since `Float` equality is lexical,
 not equal to itself after the trip. Errors are `ConvertError`, which carries the finished
 message and no span, because the failure happened outside any tot source.
 
+**The `toml` feature turns on `preserve_order` for the whole build.** Key order is the reason —
+without it a converted table comes back alphabetized in both directions — but cargo resolves a
+package's features once across everything it compiles, so a crate that depends on both `tot`
+(with `toml`) and the `toml` crate directly gets `preserve_order` in *its* code too: `toml::Table`
+becomes an `IndexMap` rather than a `BTreeMap`, and its own tables iterate and serialize in
+insertion order instead of sorted order. Nothing fails to compile, and there is no way to opt
+back out while depending on `tot/toml` — cargo features only ever add. If sorted `toml::Table`
+iteration matters to you, sort at the point of use rather than relying on the map type.
+
 ## Layout
 
 ```
@@ -462,10 +471,23 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all --check
 ```
 
-**`--all-features` matters** — `serde`, `yaml`, and `toml` are off by default. The serde tests
-compile to nothing without it and pass silently; the yaml and toml tests reach a `--workspace`
-build through the CLI's dependency, so the build where they go silent is `cargo test -p tot`.
-Run clippy both ways; the feature gate is easy to get wrong.
+**`--all-features` matters** — `serde`, `yaml`, and `toml` are off by default, and the tests
+behind a feature that is off compile to nothing and pass silently.
+
+**`-p tot` matters too**, for the opposite reason. `tot-cli` depends on the library with `yaml`
+and `toml` on, and cargo resolves a package's features once across everything it is building, so
+*every* `--workspace` command compiles the library with both converters present — there is no
+such thing as a features-off `--workspace` build of them. Only `-p tot` resolves the library's
+features on their own:
+
+```bash
+cargo clippy -p tot --all-targets --no-default-features -- -D warnings
+cargo clippy -p tot --all-targets --features yaml -- -D warnings
+cargo clippy -p tot --all-targets --features toml -- -D warnings
+```
+
+That is the direction the gate is easy to get wrong in, and the only way either converter gets
+built without the other.
 
 Edition 2024, Rust 1.88. Formatter tests assert two properties on every fixture, not just
 expected output: formatting preserves the parsed value, and formatting is idempotent.

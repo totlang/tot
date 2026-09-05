@@ -22,7 +22,14 @@ exclude = ["/.github", "/.gitattributes", "/site"]
 # feature is on.
 [dependencies]
 serde = { version = "1.0", optional = true }
-# `preserve_order` keeps a converted table in the document's order.
+# `preserve_order` keeps a converted table in the document's order; without it `toml::Table` is
+# a `BTreeMap` and every conversion, in both directions, comes back alphabetized.
+#
+# It leaks, and there is no way to stop it: cargo resolves a package's features once for the
+# whole graph, so turning on tot's `toml` feature turns `preserve_order` on for any *other*
+# crate in the same build that uses `toml` directly, moving its table iteration from sorted to
+# insertion order. Documented under `yaml and toml` in the README, because a consumer who hits
+# it will be looking at their own output and not at this line.
 toml = { version = "1.1.4", optional = true, features = ["preserve_order"] }
 yaml_serde = { version = "0.10.7", optional = true }
 

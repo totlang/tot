@@ -49,10 +49,22 @@ pub fn from_str(src: &str) -> Result<FromToml, ConvertError> {
 /// Writes a [`Value`] as TOML, reporting any nulls the policy dropped.
 pub fn to_string(value: &Value, nulls: NullPolicy) -> Result<ToToml, ConvertError> {
     let mut dropped = Vec::new();
-    let Some(toml::Value::Table(table)) = tot_to_toml(value, "", &mut dropped, nulls)? else {
-        return Err(ConvertError::new(
-            "TOML needs a table at the root, and this document's root is not an object",
-        ));
+    let table = match tot_to_toml(value, "", &mut dropped, nulls)? {
+        Some(toml::Value::Table(table)) => table,
+        // `Ok(None)` is the root itself being a null that `NullPolicy::Omit` dropped, which
+        // leaves no document at all rather than one of the wrong shape. Calling that a root
+        // that "is not an object" names a cause the reader cannot act on: they would go
+        // looking for the object they wrote, when what they have is a policy question.
+        None => {
+            return Err(ConvertError::new(
+                "TOML needs a table at the root, and this document is a single null",
+            ));
+        }
+        Some(_) => {
+            return Err(ConvertError::new(
+                "TOML needs a table at the root, and this document's root is not an object",
+            ));
+        }
     };
     let text = toml::to_string_pretty(&table).map_err(|e| ConvertError::new(e.to_string()))?;
     Ok(ToToml { text, dropped })
