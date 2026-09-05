@@ -1,8 +1,5 @@
 [workspace]
 members = ["cli"]
-# The playground's wasm bridge is built by the site, not by `cargo test --workspace`. Excluding
-# it keeps wasm-bindgen and the converters' dependencies out of the library's own build and CI,
-# which is the whole point of the library having none.
 exclude = ["site/wasm"]
 
 [package]
@@ -21,14 +18,21 @@ categories = ["config", "parser-implementations", "encoding"]
 repository = "https://github.com/totlang/tot"
 exclude = ["/.github", "/.gitattributes", "/site"]
 
-# The library stays dependency-free by default. The YAML and TOML converters need
-# third-party parsers, so they live in the `tot-cli` crate instead.
+# The library stays dependency-free by default; each converter pulls its parser only when its
+# feature is on.
 [dependencies]
 serde = { version = "1.0", optional = true }
+# `preserve_order` keeps a converted table in the document's order.
+toml = { version = "1.1.4", optional = true, features = ["preserve_order"] }
+yaml_serde = { version = "0.10.7", optional = true }
 
 [features]
 # Off by default so that the parser, the formatter, and JSON output cost nothing.
 serde = ["dep:serde"]
+# The YAML converter, and the parser it needs.
+yaml = ["dep:yaml_serde"]
+# The TOML converter, and the parser it needs.
+toml = ["dep:toml"]
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }

@@ -10,14 +10,17 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# Standalone on purpose: the root workspace excludes this crate and drives it by
+# `--manifest-path`, and an empty table here stops the search for a workspace before it
+# climbs out of whatever checkout this directory lives in — a linked worktree's copy sits
+# inside another checkout's tree, whose exclude list cannot name it.
+[workspace]
+
 [dependencies]
-# The library itself, plus the two converters that are not part of it. `convert.rs` is included
-# from the CLI by path rather than copied, so the YAML and TOML mappings the playground shows
-# are byte for byte the ones `tot to yaml` produces.
-tot = { path = "../.." }
-toml = { version = "1.1.4", features = ["preserve_order"] }
+# The library, with the two converters the page offers turned on. They are the same code
+# `tot to` runs, so the playground cannot disagree with the tool.
+tot = { path = "../..", features = ["yaml", "toml"] }
 wasm-bindgen = "0.2"
-yaml_serde = "0.10.7"
 
 # wasm-pack calls wasm-opt with a bare `-O`, which leaves every wasm feature at binaryen's
 # defaults. Rust's wasm32 baseline has moved on since those defaults were set, so the flags have

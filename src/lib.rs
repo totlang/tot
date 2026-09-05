@@ -16,6 +16,8 @@
 //! );
 //! ```
 
+#[cfg(any(feature = "yaml", feature = "toml"))]
+mod convert;
 mod cst;
 mod error;
 mod fmt;
@@ -29,10 +31,16 @@ mod value;
 
 pub mod json;
 pub mod template;
+#[cfg(feature = "toml")]
+pub mod toml;
+#[cfg(feature = "yaml")]
+pub mod yaml;
 
 #[cfg(feature = "serde")]
 pub mod serde;
 
+#[cfg(any(feature = "yaml", feature = "toml"))]
+pub use error::ConvertError;
 pub use error::{Error, Span};
 pub use fmt::{format, format_template, format_value};
 pub use lex::Dialect;

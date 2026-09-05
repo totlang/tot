@@ -53,12 +53,13 @@ anything else relative becomes a link into the repository on GitHub.
 
 **The playground runs the real parser.** `wasm/` compiles the `tot` crate to WebAssembly, so
 every answer the page gives is the answer `tot` would give, including the caret diagnostics —
-they come from the same `render` call the CLI uses. The YAML and TOML converters are the CLI's
-`convert.rs`, included by path rather than copied, so the two cannot disagree.
+they come from the same `render` call the CLI uses. The YAML and TOML converters are the
+library's, behind the features the wasm crate turns on, so the page and `tot to` run the same
+code.
 
 The wasm crate is **excluded from the cargo workspace** (see the root `Cargo.toml`), which keeps
-`wasm-bindgen` and the converters' dependencies out of `cargo test --workspace`. The library
-having no dependencies is the point; the site should not be what changes that.
+`wasm-bindgen` out of `cargo test --workspace`. The library having no dependencies by default is
+the point; the site should not be what changes that.
 
 The playground's samples are `../examples/*`, read at build time. A playground that drifted from
 the files the tests check would be worse than no playground.

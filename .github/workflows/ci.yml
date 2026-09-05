@@ -68,10 +68,9 @@ jobs:
           workspaces: site/wasm
 
       # `site/wasm` is outside the cargo workspace, so every `--workspace` command above steps
-      # straight over it. Without this job nothing in the repository compiles that crate — and it
-      # is the crate that reaches `cli/src/convert.rs` through a `#[path]` include, so a rename in
-      # the CLI's converter would break the playground silently and be found by a visitor. The
-      # claim that the page cannot disagree with the tool rests on this file building.
+      # straight over it. Without this job nothing in the repository compiles that crate — the
+      # bridge the playground loads — and a crate that only builds on the host says nothing
+      # about the target it actually ships for.
       - run: cargo fmt --check --manifest-path site/wasm/Cargo.toml
 
       # On the host, because that is where the bridge's own tests can run: the crate is an rlib

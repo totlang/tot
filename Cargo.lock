@@ -154,15 +154,15 @@ name = "tot"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "toml",
+ "yaml_serde",
 ]
 
 [[package]]
 name = "tot-cli"
 version = "0.1.0"
 dependencies = [
- "toml",
  "tot",
- "yaml_serde",
 ]
 
 [[package]]

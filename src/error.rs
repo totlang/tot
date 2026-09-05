@@ -132,3 +132,37 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+/// A conversion failure: foreign text tot cannot read, or a document the other format cannot
+/// represent.
+///
+/// A refusal names the tot path it happened at, spelled the way a path spells one, so it can
+/// be handed to `tot get`. A parse failure is the foreign parser's own diagnostic, line and
+/// column included, and names no path of ours. Either way the message is final-form, which is
+/// why it stays a string rather than fields a caller would only glue back together. Unlike
+/// [`Error`] it carries no span, because the failure happened outside any tot source.
+#[cfg(any(feature = "yaml", feature = "toml"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConvertError {
+    /// What went wrong, and where.
+    pub message: String,
+}
+
+#[cfg(any(feature = "yaml", feature = "toml"))]
+impl ConvertError {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        ConvertError {
+            message: message.into(),
+        }
+    }
+}
+
+#[cfg(any(feature = "yaml", feature = "toml"))]
+impl fmt::Display for ConvertError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[cfg(any(feature = "yaml", feature = "toml"))]
+impl std::error::Error for ConvertError {}

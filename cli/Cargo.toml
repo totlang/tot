@@ -15,8 +15,7 @@ name = "tot"
 path = "src/main.rs"
 
 [dependencies]
-toml = { version = "1.1.4", features = ["preserve_order"] }
 # The version is what cargo publishes against; the path is what a local build uses. Without a
-# version requirement `cargo publish` refuses the crate outright.
-tot = { path = "..", version = "0.1.0" }
-yaml_serde = "0.10.7"
+# version requirement `cargo publish` refuses the crate outright. The `tot to` / `tot from`
+# commands are the library's converters — the binary has none of its own.
+tot = { path = "..", version = "0.1.0", features = ["yaml", "toml"] }

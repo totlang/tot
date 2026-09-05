@@ -311,7 +311,7 @@ Check `.tot` files out with LF, as [.gitattributes](.gitattributes) in this repo
 | | |
 |---|---|
 | JSON | Lossless both ways. Comments dropped on the way out. |
-| YAML | In: aliases resolved and inlined; tags, non-string keys, and multi-document streams rejected. Out: lossless. |
+| YAML | In: aliases resolved and inlined; tags, non-string keys, and multi-document streams rejected. Out: loses nothing but float spellings, which normalize (`1.00` → `1.0`). |
 | TOML | In: datetimes become strings. Out: nulls dropped (`--null=error` refuses instead), root must be an object, sub-tables hoisted below plain values because TOML's syntax demands it. |
 
 ## Library
@@ -329,6 +329,8 @@ let bad   = tot::Schema::parse(shape)?.check(src)?;    // -> Vec<Violation>
 let at    = tot::Path::parse("a.b[0]")?.get(&value)?;
 let v     = tot::parse_value(arg)?;               // text in a value position, not a file
 let doc   = tot::Template::parse(tott)?.evaluate(&params)?;   // or .build(&params, &mut imports)
+let yaml  = tot::yaml::to_string(&value)?;        // behind the `yaml` feature
+let read  = tot::toml::from_str(src)?;            // behind the `toml` feature
 ```
 
 `Template` keeps its own source and name, so a failure three imports deep still draws its caret
@@ -363,8 +365,8 @@ Numbers keep their original lexeme, so integers wider than `i64` survive a round
 `Integer` equality is value equality, but **`Float` equality is lexical** — `1.0 != 1.00`.
 Compare `as_f64()` if you mean value equality.
 
-The `tot` crate has **no dependencies by default**. YAML and TOML need third-party parsers, so
-they live in `tot-cli` instead.
+The `tot` crate has **no dependencies by default**. `serde`, `yaml`, and `toml` are
+off-by-default features, each pulling what it needs.
 
 ### serde
 
@@ -400,6 +402,30 @@ already do that work well, and a streaming implementation would be a second copy
   back as `1.0`. Since `Float` equality is lexical, a `Value` with such a lexeme is `!=` itself
   after a serde round trip. Integer lexemes are unaffected, up to 128 bits.
 
+### yaml and toml
+
+Behind the `yaml` and `toml` features, off by default, each pulling its parser:
+
+```toml
+tot = { version = "0.1", features = ["yaml", "toml"] }
+```
+
+```rust
+let value = tot::yaml::from_str(src)?;         // -> Value
+let text  = tot::yaml::to_string(&value)?;     // -> String
+let read  = tot::toml::from_str(src)?;         // -> FromToml { value, datetimes }
+let write = tot::toml::to_string(&v, tot::toml::NullPolicy::Omit)?;   // -> ToToml { text, dropped }
+```
+
+These are the same converters `tot to` and `tot from` run — the CLI has none of its own, so the
+two cannot disagree. The side channels the CLI prints as notes are returned instead:
+`FromToml::datetimes` names every datetime that became a string, and `ToToml::dropped` names
+every null the policy dropped (`NullPolicy::Error` refuses instead). Every path either reports
+is a real `tot get` path. Both directions carry values, not spellings: a float comes back in
+its shortest form — `1.00` as `1.0` — and since `Float` equality is lexical, such a value is
+not equal to itself after the trip. Errors are `ConvertError`, which carries the finished
+message and no span, because the failure happened outside any tot source.
+
 ## Layout
 
 ```
@@ -414,10 +440,13 @@ src/                tot — library, zero dependencies
   path.rs           `a.b[0]` paths — a CLI convenience, not part of the language
   schema.rs         checking a document's shape against a schema written in tot
   json.rs           JSON output only
+  yaml.rs           YAML in and out, behind the `yaml` feature
+  toml.rs           TOML in and out, behind the `toml` feature
+  convert.rs        path spelling shared by the two converters
   serde/            optional; ser.rs and de.rs, both via Value
   value.rs          Value, Integer, Float, Map
-  error.rs          Span, Error, shared caret rendering
-cli/                tot-cli — binary `tot`; deps: toml, yaml_serde
+  error.rs          Span, Error, ConvertError, shared caret rendering
+cli/                tot-cli — binary `tot`; no dependencies beyond tot
   build.rs          resolving `(import …)` against the filesystem
 ```
 
@@ -433,8 +462,10 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all --check
 ```
 
-**`--all-features` matters** — `serde` is off by default, so without it the serde tests compile
-to nothing and pass silently. Run clippy both ways; the feature gate is easy to get wrong.
+**`--all-features` matters** — `serde`, `yaml`, and `toml` are off by default. The serde tests
+compile to nothing without it and pass silently; the yaml and toml tests reach a `--workspace`
+build through the CLI's dependency, so the build where they go silent is `cargo test -p tot`.
+Run clippy both ways; the feature gate is easy to get wrong.
 
 Edition 2024, Rust 1.88. Formatter tests assert two properties on every fixture, not just
 expected output: formatting preserves the parsed value, and formatting is idempotent.

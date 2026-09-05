@@ -20,16 +20,9 @@
 use std::collections::HashMap;
 
 use tot::template::{Imports, Loaded};
+use tot::toml::NullPolicy;
 use tot::{Dialect, Error, Map, Params, Schema, Template, Value};
 use wasm_bindgen::prelude::wasm_bindgen;
-
-// `convert.rs` is the CLI's, included rather than copied. A second copy of the YAML and TOML
-// mappings would drift, and the playground exists to show what the tool actually does. Only half
-// of it is reachable from here: the playground writes the other formats but does not read them,
-// and `--null=error` is a CLI flag with no equivalent on the page.
-#[allow(dead_code)]
-#[path = "../../../cli/src/convert.rs"]
-mod convert;
 
 // --- panics --------------------------------------------------------------------------------
 
@@ -168,13 +161,14 @@ pub fn convert(src: &str, target: &str) -> String {
         },
         "json" => ok(tot::json::to_string_pretty(&value), warnings),
         "json-compact" => ok(tot::json::to_string(&value), warnings),
-        "yaml" => match convert::to_yaml(&value) {
+        "yaml" => match tot::yaml::to_string(&value) {
             Ok(text) => ok(text, warnings),
-            Err(message) => refused(message),
+            Err(e) => refused(e.to_string()),
         },
-        "toml" => match convert::to_toml(&value, convert::NullPolicy::Omit) {
-            Ok((text, dropped)) => {
-                let notes = dropped
+        "toml" => match tot::toml::to_string(&value, NullPolicy::Omit) {
+            Ok(out) => {
+                let notes = out
+                    .dropped
                     .into_iter()
                     .map(|path| {
                         object(vec![(
@@ -183,9 +177,9 @@ pub fn convert(src: &str, target: &str) -> String {
                         )])
                     })
                     .collect();
-                reported(text, warnings, notes)
+                reported(out.text, warnings, notes)
             }
-            Err(message) => refused(message),
+            Err(e) => refused(e.to_string()),
         },
         other => refused(format!("unknown target format `{other}`")),
     }
@@ -413,9 +407,9 @@ fn parse_params(json: &str) -> Result<Params, String> {
 // --- tests ---------------------------------------------------------------------------------
 
 // These run on the host, not in a browser: the crate is an `rlib` as well as a `cdylib`, and a
-// `#[wasm_bindgen]` function compiles to an ordinary one off wasm32. What they are for is the
-// seam — `convert.rs` arrives here by `#[path]`, and the whole reason it does is that the page
-// must not be able to disagree with `tot to`. Nothing else in the repository compiles this file.
+// `#[wasm_bindgen]` function compiles to an ordinary one off wasm32. Nothing else in the
+// repository compiles this file, and the converters under test are the library's — the same
+// ones `tot to` runs — so the page cannot disagree with the tool.
 #[cfg(test)]
 mod tests {
     use super::*;

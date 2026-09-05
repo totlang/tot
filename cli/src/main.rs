@@ -1,12 +1,11 @@
 //! The `tot` command-line interface.
 
 mod build;
-mod convert;
 
 use std::io::{Read, Write};
 use std::process::ExitCode;
 
-use convert::NullPolicy;
+use tot::toml::NullPolicy;
 
 const HELP: &str = "\
 tot — JSON with the punctuation removed
@@ -730,13 +729,13 @@ fn to(args: &[String]) -> Result<ExitCode, String> {
                 tot::json::to_string_pretty(&value)
             }
         }
-        Format::Yaml => convert::to_yaml(&value)?,
+        Format::Yaml => tot::yaml::to_string(&value).map_err(|e| e.to_string())?,
         Format::Toml => {
-            let (text, dropped) = convert::to_toml(&value, nulls)?;
-            for path in &dropped {
+            let out = tot::toml::to_string(&value, nulls).map_err(|e| e.to_string())?;
+            for path in &out.dropped {
                 eprintln!("tot: dropped null at {path} — TOML has no null");
             }
-            text
+            out.text
         }
     };
 
@@ -764,13 +763,13 @@ fn from(args: &[String]) -> Result<ExitCode, String> {
             Some(value) => value,
             None => return Ok(ExitCode::from(1)),
         },
-        Format::Yaml => convert::from_yaml(&src)?,
+        Format::Yaml => tot::yaml::from_str(&src).map_err(|e| e.to_string())?,
         Format::Toml => {
-            let (value, datetimes) = convert::from_toml(&src)?;
-            for path in &datetimes {
+            let out = tot::toml::from_str(&src).map_err(|e| e.to_string())?;
+            for path in &out.datetimes {
                 eprintln!("tot: datetime at {path} became a string — tot has no date type");
             }
-            value
+            out.value
         }
     };
 
