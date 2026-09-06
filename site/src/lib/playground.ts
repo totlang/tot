@@ -645,7 +645,9 @@ export function start() {
   init()
     .then(() => {
       ready = true;
-      drawerStatus.textContent = 'tot 0.1.0 · WebAssembly · nothing leaves your browser';
+      // Hand-written, so it has to be bumped with the crate. Nothing checks it, which is how
+      // it sat at 0.1.0 after the bump to 0.2.0.
+      drawerStatus.textContent = 'tot 0.2.0 · WebAssembly · nothing leaves your browser';
       run();
     })
     .catch((error: unknown) => {

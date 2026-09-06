@@ -16,6 +16,8 @@ path = "src/main.rs"
 
 [dependencies]
 # The version is what cargo publishes against; the path is what a local build uses. Without a
-# version requirement `cargo publish` refuses the crate outright. The `tot to` / `tot from`
-# commands are the library's converters — the binary has none of its own.
-tot = { path = "..", version = "0.1.0", features = ["yaml", "toml"] }
+# version requirement `cargo publish` refuses the crate outright. It has to be bumped in step
+# with the library's own version, or the path build stops resolving: cargo checks the
+# requirement against the crate on disk, not just against the registry. The `tot to` /
+# `tot from` commands are the library's converters — the binary has none of its own.
+tot = { path = "..", version = "0.2.0", features = ["yaml", "toml"] }

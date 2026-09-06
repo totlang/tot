@@ -375,7 +375,7 @@ off-by-default features, each pulling what it needs.
 Behind the `serde` feature, off by default:
 
 ```toml
-tot = { version = "0.1", features = ["serde"] }
+tot = { version = "0.2", features = ["serde"] }
 ```
 
 ```rust
@@ -409,7 +409,7 @@ already do that work well, and a streaming implementation would be a second copy
 Behind the `yaml` and `toml` features, off by default, each pulling its parser:
 
 ```toml
-tot = { version = "0.1", features = ["yaml", "toml"] }
+tot = { version = "0.2", features = ["yaml", "toml"] }
 ```
 
 ```rust
