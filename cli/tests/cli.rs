@@ -1,7 +1,7 @@
 //! End-to-end tests: they run the real binary over stdin and check stdout, stderr, and the
 //! exit code.
 
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -90,12 +90,23 @@ fn run_in(dir: Option<&Path>, args: &[&str], stdin: &str) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tot");
-    child
-        .stdin
-        .take()
-        .expect("stdin is piped")
-        .write_all(stdin.as_bytes())
-        .expect("write stdin");
+    let mut input = child.stdin.take().expect("stdin is piped");
+    let written = input.write_all(stdin.as_bytes());
+    // Closing the pipe is what tells the tool its input has ended, so it has to happen before
+    // the wait below — and before the write is judged, or a failure would leave the child
+    // blocked forever rather than reporting itself.
+    drop(input);
+    match written {
+        Ok(()) => {}
+        // The tool is allowed to exit before reading a word of stdin: a wrong command line is
+        // settled before any input is touched, and `set` with no path does exactly that. The
+        // write then lands on a pipe with no reader, which is the tool being right rather than
+        // the test being wrong. It is a race either way — the write wins if it gets there
+        // first — and one that only shows on some platforms, because Linux reports the dead
+        // reader immediately where Windows usually swallows the write into the pipe buffer.
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => {}
+        Err(e) => panic!("write stdin: {e}"),
+    }
     let output = child.wait_with_output().expect("wait for tot");
     Output {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
