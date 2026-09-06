@@ -141,8 +141,13 @@ impl std::error::Error for Error {}
 /// column included, and names no path of ours. Either way the message is final-form, which is
 /// why it stays a string rather than fields a caller would only glue back together. Unlike
 /// [`Error`] it carries no span, because the failure happened outside any tot source.
+///
+/// `non_exhaustive` on the same reasoning as [`Error`], and for a stronger reason: its
+/// constructor is crate-private, so a caller can only ever read one. Sealing it costs them
+/// nothing today and leaves room for the span or the note a later version might carry.
 #[cfg(any(feature = "yaml", feature = "toml"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ConvertError {
     /// What went wrong, and where.
     pub message: String,

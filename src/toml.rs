@@ -11,7 +11,11 @@ use crate::error::ConvertError;
 use crate::value::{Float, Integer, Map, Value};
 
 /// What to do with a `null` on the way into TOML, which has no such value.
+///
+/// `non_exhaustive`, so that a third answer — writing the empty string, say — can be added
+/// without breaking anyone. Naming a variant is unaffected; only matching on one needs a `_`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NullPolicy {
     /// Drop the member or element, reporting the path.
     #[default]
@@ -21,7 +25,12 @@ pub enum NullPolicy {
 }
 
 /// What reading TOML produced.
+///
+/// `non_exhaustive`: this is a report, never something a caller builds, and the lossy steps a
+/// conversion has to own up to are the thing most likely to grow. Read the fields, or destructure
+/// with a trailing `..`.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct FromToml {
     /// The document.
     pub value: Value,
@@ -30,7 +39,10 @@ pub struct FromToml {
 }
 
 /// What writing TOML produced.
+///
+/// `non_exhaustive`, for the reasons on [`FromToml`].
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct ToToml {
     /// The document as TOML text.
     pub text: String,

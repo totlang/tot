@@ -41,6 +41,20 @@ fn a_tag_is_refused() {
 }
 
 #[test]
+fn a_refusal_names_the_path_the_way_a_path_spells_it() {
+    // The converters share one speller so that a refusal can be handed straight to `tot get`.
+    // A key holding a dot or a space is where a bare `.` join would name something that does
+    // not exist, so the refusal is provoked under exactly those keys.
+    let error = yaml::from_str("\"com.example\":\n  \"log level\": !custom 1\n").unwrap_err();
+    let (path, _) = error
+        .message
+        .split_once(": ")
+        .expect("a refusal names its path first");
+    assert_eq!(path, "\"com.example\".\"log level\"");
+    tot::Path::parse(path).expect("and names it in a form `tot get` accepts");
+}
+
+#[test]
 fn a_multi_document_stream_is_refused() {
     assert!(yaml::from_str("a: 1\n---\nb: 2\n").is_err());
 }
