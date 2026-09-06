@@ -136,7 +136,8 @@ PATHS
 
 EXIT CODES
     0   success
-    1   a file is unformatted, a document failed to parse, or a path was not found
+    1   the input did not answer the request: a file is unformatted, a document
+        failed to parse or to convert, or a path was not found
     2   a file could not be read or written, or the command line was wrong
 
 NOTE
@@ -729,14 +730,19 @@ fn to(args: &[String]) -> Result<ExitCode, String> {
                 tot::json::to_string_pretty(&value)
             }
         }
-        Format::Yaml => tot::yaml::to_string(&value).map_err(|e| e.to_string())?,
-        Format::Toml => {
-            let out = tot::toml::to_string(&value, nulls).map_err(|e| e.to_string())?;
-            for path in &out.dropped {
-                eprintln!("tot: dropped null at {path} — TOML has no null");
+        Format::Yaml => match tot::yaml::to_string(&value) {
+            Ok(text) => text,
+            Err(e) => return Ok(refusal(&e)),
+        },
+        Format::Toml => match tot::toml::to_string(&value, nulls) {
+            Ok(out) => {
+                for path in &out.dropped {
+                    eprintln!("tot: dropped null at {path} — TOML has no null");
+                }
+                out.text
             }
-            out.text
-        }
+            Err(e) => return Ok(refusal(&e)),
+        },
     };
 
     // An empty document converts to empty text, and a lone newline is not a better rendering
@@ -763,14 +769,19 @@ fn from(args: &[String]) -> Result<ExitCode, String> {
             Some(value) => value,
             None => return Ok(ExitCode::from(1)),
         },
-        Format::Yaml => tot::yaml::from_str(&src).map_err(|e| e.to_string())?,
-        Format::Toml => {
-            let out = tot::toml::from_str(&src).map_err(|e| e.to_string())?;
-            for path in &out.datetimes {
-                eprintln!("tot: datetime at {path} became a string — tot has no date type");
+        Format::Yaml => match tot::yaml::from_str(&src) {
+            Ok(value) => value,
+            Err(e) => return Ok(refusal(&e)),
+        },
+        Format::Toml => match tot::toml::from_str(&src) {
+            Ok(out) => {
+                for path in &out.datetimes {
+                    eprintln!("tot: datetime at {path} became a string — tot has no date type");
+                }
+                out.value
             }
-            out.value
-        }
+            Err(e) => return Ok(refusal(&e)),
+        },
     };
 
     write_out(&tot::format_value(&value))?;
@@ -800,6 +811,18 @@ fn parse_or_report(src: &str, label: &str) -> Option<tot::Value> {
             None
         }
     }
+}
+
+/// Reports a converter's refusal, and answers the exit code it deserves.
+///
+/// The same reasoning as [`parse_or_report`], one format over: foreign text tot cannot read, or
+/// a document the other format cannot represent, is the input failing to answer the request.
+/// The file was read and the command line was right, so this is exit 1 and not 2 — and without
+/// this, `tot from json` and `tot from yaml` would disagree about an unreadable document.
+/// A [`tot::ConvertError`] carries a finished message, so there is no diagnostic to render.
+fn refusal(e: &tot::ConvertError) -> ExitCode {
+    eprintln!("tot: {e}");
+    ExitCode::from(1)
 }
 
 /// What a command was pointed at. With no files named, that is stdin.

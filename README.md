@@ -91,8 +91,10 @@ compiler.
 
 No FILE means stdin, and so does a FILE of `-` (a file actually named `-` is `./-`). For `fmt`
 and `check`, every input is processed before exiting — one bad file doesn't hide the rest.
-Exit codes: `0` ok, `1` the input didn't answer the request (unformatted, unparseable, or no
-such path), `2` I/O or bad arguments.
+Exit codes: `0` ok, `1` the input didn't answer the request (unformatted, unparseable,
+unconvertible, or no such path), `2` I/O or bad arguments. A converter refusing a document is
+`1` like any other unusable input — `2` is reserved for the invocation or the filesystem being
+wrong, so `tot from json` and `tot from yaml` answer alike when the document is bad.
 
 Flags: `--raw` (`get`, `set`), `--create` (`set`), `--null=set|delete` (`merge`, default
 `set`), `--compact` (`to json`),

@@ -1375,18 +1375,34 @@ fn from_yaml_emits_block_strings() {
     assert_eq!(out.stdout, "motd \"\"\"\n  hello\n\n  world\n  \"\"\"\n");
 }
 
-/// A refusal on the way *in* has to become a status the shell can branch on. Which inputs are
-/// refused is `tests/yaml.rs`'s question; this is only that the refusal survives the trip out
-/// of the library and into the exit code, on the `from` side as well as the `to` side below.
+/// A refusal on the way *in* has to become a status the shell can branch on, and the status is
+/// 1: the file was read and the command line was right, so it is the document that did not
+/// answer, exactly as for one that will not parse. Which inputs are refused is
+/// `tests/yaml.rs`'s question; this is the trip out of the library and into the exit code.
 #[test]
-fn a_refusal_while_reading_exits_two_and_says_why() {
+fn a_refusal_while_reading_exits_one_and_says_why() {
     let out = run(&["from", "yaml"], "1: one\n");
-    assert_eq!(out.code, 2);
+    assert_eq!(out.code, 1, "{}", out.stderr);
     assert!(
         out.stderr.contains("keys are always strings"),
         "{}",
         out.stderr
     );
+}
+
+/// The reason the code above is 1 rather than 2, stated as a test: `from` reads three formats,
+/// and a document none of them can read is one situation, not three. Before this was pinned,
+/// JSON answered 1 and the other two answered 2 for the same unusable input.
+#[test]
+fn every_from_format_answers_alike_for_a_document_it_cannot_read() {
+    for (format, bad) in [
+        ("json", "{\"a\": "),
+        ("yaml", "a: [1, 2\n"),
+        ("toml", "a = \n"),
+    ] {
+        let out = run(&["from", format], bad);
+        assert_eq!(out.code, 1, "from {format}: {}", out.stderr);
+    }
 }
 
 /// `ToToml::dropped` is a list of paths, and the CLI is what turns it into one note apiece.
@@ -1408,10 +1424,14 @@ fn toml_drops_nulls_and_reports_each_one() {
 /// `--null=error` has no equivalent in the library call -- it *selects* the policy the library
 /// then applies -- so the flag arriving as `NullPolicy::Error` is this file's to check, and with
 /// it the refusal plumbing on the `to` side. What the policy then does is `tests/toml.rs`'s.
+///
+/// Exit 1 again, for the mirror of the reason reading gives: the document parsed, so nothing
+/// about the invocation was wrong; it simply cannot be said in TOML. The flag being spelled
+/// wrong would be 2, and `unknown_commands_flags_and_formats_exit_two` covers that.
 #[test]
 fn toml_null_error_policy_refuses_instead() {
     let out = run(&["to", "toml", "--null=error"], "a 1 b null");
-    assert_eq!(out.code, 2);
+    assert_eq!(out.code, 1, "{}", out.stderr);
     assert!(out.stderr.contains("TOML has no null"), "{}", out.stderr);
 }
 
