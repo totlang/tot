@@ -1343,16 +1343,27 @@ fn json_keeps_integers_and_floats_apart() {
     );
 }
 
-// --- YAML ---------------------------------------------------------------------------------
+// --- conversion ---------------------------------------------------------------------------
+//
+// `tot to` and `tot from` run the library's converters, and the conversions themselves are
+// covered where they live -- tests/yaml.rs and tests/toml.rs. What is left for this file is the
+// part no library test can reach: that each subcommand finds the right converter, that a flag
+// becomes a policy, that the side channels the library returns as data come out as notes on
+// stderr in wording only the CLI knows, and that a refusal is an exit code and not just prose.
 
 #[test]
-fn yaml_round_trips() {
-    let yaml = run(&["to", "yaml"], DOC);
-    assert_eq!(yaml.code, 0, "{}", yaml.stderr);
+fn to_and_from_reach_the_right_converter() {
+    // Not a test of either conversion -- only that both subcommands are wired to them, in both
+    // directions, for each format that is not JSON. `DOC` has no nulls and no sub-table above a
+    // plain value, so neither format's lossy step is in play and a plain round trip is right.
+    for format in ["yaml", "toml"] {
+        let out = run(&["to", format], DOC);
+        assert_eq!(out.code, 0, "to {format}: {}", out.stderr);
 
-    let back = run(&["from", "yaml"], &yaml.stdout);
-    assert_eq!(back.code, 0, "{}", back.stderr);
-    assert_eq!(json(&back.stdout), json(DOC));
+        let back = run(&["from", format], &out.stdout);
+        assert_eq!(back.code, 0, "from {format}: {}", back.stderr);
+        assert_eq!(json(&back.stdout), json(DOC), "{format} did not round trip");
+    }
 }
 
 /// The case the converter exists for: a YAML block scalar comes out as a tot block, not as
@@ -1364,8 +1375,11 @@ fn from_yaml_emits_block_strings() {
     assert_eq!(out.stdout, "motd \"\"\"\n  hello\n\n  world\n  \"\"\"\n");
 }
 
+/// A refusal on the way *in* has to become a status the shell can branch on. Which inputs are
+/// refused is `tests/yaml.rs`'s question; this is only that the refusal survives the trip out
+/// of the library and into the exit code, on the `from` side as well as the `to` side below.
 #[test]
-fn yaml_mappings_with_non_string_keys_are_refused() {
+fn a_refusal_while_reading_exits_two_and_says_why() {
     let out = run(&["from", "yaml"], "1: one\n");
     assert_eq!(out.code, 2);
     assert!(
@@ -1375,18 +1389,8 @@ fn yaml_mappings_with_non_string_keys_are_refused() {
     );
 }
 
-// --- TOML ---------------------------------------------------------------------------------
-
-#[test]
-fn toml_round_trips_apart_from_nulls() {
-    let toml = run(&["to", "toml"], DOC);
-    assert_eq!(toml.code, 0, "{}", toml.stderr);
-
-    let back = run(&["from", "toml"], &toml.stdout);
-    assert_eq!(back.code, 0, "{}", back.stderr);
-    assert_eq!(json(&back.stdout), json(DOC));
-}
-
+/// `ToToml::dropped` is a list of paths, and the CLI is what turns it into one note apiece.
+/// Nothing in the library pins that wording, because the library does not have it.
 #[test]
 fn toml_drops_nulls_and_reports_each_one() {
     let out = run(&["to", "toml"], "a 1 b null nested { c null }");
@@ -1401,6 +1405,9 @@ fn toml_drops_nulls_and_reports_each_one() {
     );
 }
 
+/// `--null=error` has no equivalent in the library call -- it *selects* the policy the library
+/// then applies -- so the flag arriving as `NullPolicy::Error` is this file's to check, and with
+/// it the refusal plumbing on the `to` side. What the policy then does is `tests/toml.rs`'s.
 #[test]
 fn toml_null_error_policy_refuses_instead() {
     let out = run(&["to", "toml", "--null=error"], "a 1 b null");
@@ -1408,13 +1415,7 @@ fn toml_null_error_policy_refuses_instead() {
     assert!(out.stderr.contains("TOML has no null"), "{}", out.stderr);
 }
 
-#[test]
-fn toml_needs_an_object_at_the_root() {
-    let out = run(&["to", "toml"], "[1 2 3]");
-    assert_eq!(out.code, 2);
-    assert!(out.stderr.contains("table at the root"), "{}", out.stderr);
-}
-
+/// The other side channel, `FromToml::datetimes`, and the note the CLI writes from it.
 #[test]
 fn toml_datetimes_become_strings_with_a_warning() {
     let out = run(&["from", "toml"], "when = 1979-05-27T07:32:00Z\n");

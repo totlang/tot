@@ -30,6 +30,13 @@ serde = { version = "1.0", optional = true }
 # crate in the same build that uses `toml` directly, moving its table iteration from sorted to
 # insertion order. Documented under `yaml and toml` in the README, because a consumer who hits
 # it will be looking at their own output and not at this line.
+#
+# Only the *reader* needs it, which is measured rather than assumed, and is why the obvious fix
+# does not work. Writing a `Value` through serde instead of through `toml::Value` keeps document
+# order and hoists sub-tables on its own with the feature off -- but the deserializer sorts keys
+# before any `Deserialize` impl sees them, so no visitor recovers the order, and a datetime only
+# arrives as a private `$__toml_private_datetime` key. Dropping the feature therefore means
+# reading TOML on `toml_parser` by hand. A hand-written reader is the worse trade.
 toml = { version = "1.1.4", optional = true, features = ["preserve_order"] }
 yaml_serde = { version = "0.10.7", optional = true }
 
