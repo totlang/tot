@@ -53,3 +53,7 @@ serde = { version = "1.0", features = ["derive"] }
 
 [package.metadata.docs.rs]
 all-features = true
+# Turns on the `docsrs` cfg that `src/lib.rs` gates `feature(doc_cfg)` behind. Without it
+# `all-features` renders `yaml`, `toml` and `serde` looking exactly like the modules that cost
+# nothing, and the reader's first hint that a feature exists is the build error.
+rustdoc-args = ["--cfg", "docsrs"]

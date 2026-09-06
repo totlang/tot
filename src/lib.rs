@@ -16,6 +16,14 @@
 //! );
 //! ```
 
+// Puts an "Available on crate feature `yaml`" badge on everything behind a feature gate, so a
+// reader on docs.rs is told what to turn on rather than finding out from a build error. Only
+// docs.rs sets `docsrs` (through `rustdoc-args` in the manifest) and only docs.rs builds on
+// nightly; with the cfg unset this expands to nothing, so stable and the 1.88 MSRV check never
+// see a `feature` attribute. `doc_auto_cfg` was the spelling until it was removed in 1.92 and
+// folded into `doc_cfg`, which now does the automatic part on its own.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 #[cfg(any(feature = "yaml", feature = "toml"))]
 mod convert;
 mod cst;

@@ -46,6 +46,14 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # The rendered documentation is the crate's other output, and until now nothing built it.
+      # An ambiguous intra-doc link silently renders as plain text rather than a link, and one
+      # had been doing so since the converters first landed. `--all-features` because the gated
+      # modules are most of what a reader arrives for.
+      - run: cargo doc -p tot --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
   features:
     name: each feature on its own
     runs-on: ubuntu-latest

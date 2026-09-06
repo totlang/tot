@@ -228,7 +228,7 @@ impl Printer {
 
 /// Render a [`Value`] as tot.
 ///
-/// This is the converters' entry point, and it differs from [`format`] in the one way that
+/// This is the converters' entry point, and it differs from [`format()`] in the one way that
 /// matters: there is no source text, so there is no author intent to preserve. Everything is
 /// written in block form except empty collections.
 ///
