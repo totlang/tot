@@ -4,7 +4,7 @@ exclude = ["site/wasm"]
 
 [package]
 name = "tot"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # Edition 2024 needs 1.85; the let-chains in `lint`, `parse`, and the CLI need 1.88. Declared so
 # that an older toolchain gets cargo's "requires rustc 1.88 or newer" instead of a raw error
